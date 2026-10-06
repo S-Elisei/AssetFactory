@@ -3,8 +3,9 @@
 AssetFactory makes game assets — images, meshes, textures, sound effects, music and speech — for AI agents and people,
 through a REST API and a web UI.
 
-1. **`meshops`** — code shared by the stages, without classes: GLB read and write, vertex welding, welded normals,
-   UV overlap count.
+1. **`shared/`** — modules of code shared by two or more stages, without classes: `meshops` (GLB read and write,
+   vertex welding, welded normals, UV overlap count), `diffusers_common` (fitting a text encoder, a transformer and a
+   VAE onto 8 GB, the sampling-step callback).
 2. **`Worker`** — a process in the venv of one of the factory's environments; it talks to the core with JSON over a
    pipe. Loaded models stay in the process until it is unloaded. It runs offline.
 3. **Local stage** — a function a `Worker` runs; its inputs and outputs are files. Local stages:
