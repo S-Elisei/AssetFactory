@@ -1,2 +1,6 @@
 /legacy/
 /old_data/
+/envs/
+/models/
+/.cache/
+__pycache__/
