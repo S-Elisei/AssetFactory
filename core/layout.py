@@ -5,6 +5,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 ENVS = ROOT / "envs"
+DATA = ROOT / "data"
 
 sys.path.insert(0, str(ROOT / "worker"))
 from context import MODELS  # noqa: E402

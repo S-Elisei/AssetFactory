@@ -15,7 +15,7 @@ from functools import cache
 import psutil
 
 from core.calls import STOPPING, OutOfMemory, StageCancelled, StageFailed
-from core.layout import ENVS, ROOT
+from core.layout import DATA, ENVS, ROOT
 from context import InputError
 
 # Seconds an alive Worker stays up without a call. Guessed.
@@ -31,7 +31,7 @@ CANCEL_GRACE = 30.0
 RAM_CHECK_SECONDS = 1.0
 # Bytes of the longest line the queue reads from a Worker. Guessed.
 LINE_LIMIT = 2**24
-LOGS = ROOT / "data" / "logs"
+LOGS = DATA / "logs"
 # Bytes in one GB of RAM_GB.
 GB = 1e9
 
