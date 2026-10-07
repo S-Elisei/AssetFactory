@@ -1,5 +1,9 @@
 """Names shared by the Worker and the stage modules. Standard library only."""
 import time
+from pathlib import Path
+
+# Folder of the model files.
+MODELS = Path(__file__).resolve().parents[1] / "models"
 
 # Minimum seconds between two progress messages of a run that have the same text.
 PROGRESS_INTERVAL = 0.25

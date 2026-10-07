@@ -12,15 +12,15 @@ import time
 import traceback
 from pathlib import Path
 
-from context import Cancelled, Context, InputError
+from context import MODELS, Cancelled, Context, InputError
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def setup(offline):
     """Sets the environment variables and sys.path that stage imports need."""
-    os.environ["HF_HOME"] = str(ROOT / "models" / "hf")
-    os.environ["TORCH_HOME"] = str(ROOT / "models" / "torch")
+    os.environ["HF_HOME"] = str(MODELS / "hf")
+    os.environ["TORCH_HOME"] = str(MODELS / "torch")
     os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
     os.environ["PYTHONIOENCODING"] = "utf-8"
     if offline:
@@ -41,11 +41,13 @@ def stage_module(env, stage):
 
 
 def release_memory():
-    """Collects garbage; empties the CUDA cache when torch is imported."""
+    """Collects garbage; when torch is imported, also empties the CUDA cache and releases the cached pinned host
+    memory."""
     gc.collect()
     torch = sys.modules.get("torch")
     if torch is not None:
         torch.cuda.empty_cache()
+        torch._C._host_emptyCache()
 
 
 def drop_model(loaded):
