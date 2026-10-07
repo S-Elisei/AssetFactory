@@ -44,4 +44,4 @@ async def serve():
 
 
 with suppress(KeyboardInterrupt):
-    asyncio.run(serve())
+    asyncio.run(serve(), loop_factory=asyncio.ProactorEventLoop)

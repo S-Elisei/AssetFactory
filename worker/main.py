@@ -1,4 +1,5 @@
-"""Worker process of one environment. Serve mode: `main.py <env>`, JSON lines on stdin and on the original stdout.
+"""Worker process of one environment. Serve mode: `main.py <env>`, JSON lines on the original stdin and stdout, which
+only the protocol uses; the standard streams of the process become the null device (stdin) and stderr (stdout).
 Download mode: `main.py <env> download <stage>`. Every `run` has an `id` unique within the Worker process; a `cancel`
 names that id. Standard library only.
 
@@ -107,9 +108,9 @@ def run_stage(env, message, send, cancelled, models):
         release_memory()
 
 
-def read_requests(requests, cancelled):
-    """Reads stdin: `run` messages go to `requests`, `cancel` messages into `cancelled`; None marks EOF."""
-    for line in sys.stdin:
+def read_requests(commands, requests, cancelled):
+    """Reads `commands`: `run` messages go to `requests`, `cancel` messages into `cancelled`; None marks EOF."""
+    for line in commands:
         message = json.loads(line)
         if message["type"] == "cancel":
             cancelled.add(message["id"])
@@ -120,7 +121,11 @@ def read_requests(requests, cancelled):
 
 def serve(env):
     setup(offline=True)
+    commands = os.fdopen(os.dup(0), encoding="utf-8")
     protocol = os.fdopen(os.dup(1), "w", encoding="utf-8", newline="\n")
+    null = os.open(os.devnull, os.O_RDONLY)
+    os.dup2(null, 0)
+    os.close(null)
     os.dup2(2, 1)
     sys.stdout = sys.stderr
 
@@ -129,7 +134,7 @@ def serve(env):
         protocol.flush()
 
     requests, cancelled, models = queue.Queue(), set(), {}
-    threading.Thread(target=read_requests, args=(requests, cancelled), daemon=True).start()
+    threading.Thread(target=read_requests, args=(commands, requests, cancelled), daemon=True).start()
     while (message := requests.get()) is not None:
         run_stage(env, message, send, cancelled, models)
 
@@ -142,7 +147,7 @@ def download(env, stage):
 
 
 if __name__ == "__main__":
-    for stream in (sys.stdin, sys.stdout, sys.stderr):
+    for stream in (sys.stdout, sys.stderr):
         stream.reconfigure(encoding="utf-8")
     if len(sys.argv) == 4:
         download(sys.argv[1], sys.argv[3])
