@@ -1,0 +1,16 @@
+accelerate==1.12.0
+conformer==0.3.2
+diffusers==0.29.0
+huggingface-hub==1.33.0
+librosa==0.11.0
+numpy==1.26.4
+omegaconf==2.3.1
+pykakasi==2.3.0
+pyloudnorm==0.2.0
+resemble-perth==1.0.1
+s3tokenizer==0.3.0
+safetensors==0.5.3
+soundfile==0.14.0
+spacy-pkuseg==1.0.1
+tokenizers==0.22.2
+transformers==5.2.0
