@@ -34,7 +34,8 @@ through a REST API and a web UI.
 8. **`Job`** — the base class of a job.
    - A subclass declares `Params`: a pydantic class with the names, types, limits and enums of the params, without
      default values.
-   - A subclass implements `async run(ctx)`: a strictly linear sequence of stage calls, without branches.
+   - A subclass implements `async run(ctx)`: a strictly linear sequence of stage calls, without branches. After the
+     last stage, `run` assembles the job's outputs from the stage outputs (for example, writes the textured GLB).
    - Through `ctx` a subclass:
      - calls stages: `await ctx.local(stage, …)` goes to `LocalQueue`, `await ctx.cloud(app, …)` to `CloudQueue`;
      - reports progress;
