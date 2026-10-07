@@ -2,8 +2,6 @@
 as a GLB with welded vertex normals. A mesh with no more faces is written unchanged."""
 import meshops
 
-KEEP_LOADED = False
-
 
 def run(ctx, mesh, target_faces):
     vertices, faces, _ = meshops.load_glb(mesh)

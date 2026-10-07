@@ -11,7 +11,6 @@ import meshlib.mrmeshpy as mr
 import meshops
 import numpy as np
 
-KEEP_LOADED = False
 # Grid step of the level set, in median input edge lengths. Guessed.
 GRID_STEP = 1 / 3
 # Separate pieces with 2 * volume / area below this share of the model height are removed. Guessed.

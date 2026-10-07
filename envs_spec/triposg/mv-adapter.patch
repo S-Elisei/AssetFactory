@@ -1,0 +1,89 @@
+diff --git a/mvadapter/models/attention_processor.py b/mvadapter/models/attention_processor.py
+--- a/mvadapter/models/attention_processor.py
++++ b/mvadapter/models/attention_processor.py
+@@ -690,6 +690,11 @@ class DecoupledMVRowColSelfAttnProcessor2_0(torch.nn.Module):
+ 
+         if use_ref:
+             reference_hidden_states = ref_hidden_states[self.name]
++            if ref_hidden_states.cfg:
++                half = reference_hidden_states.expand(batch_size // 2, -1, -1)
++                reference_hidden_states = torch.cat([torch.zeros_like(half), half], dim=0)
++            else:
++                reference_hidden_states = reference_hidden_states.expand(batch_size, -1, -1)
+ 
+             key_ref = self.to_k_ref(reference_hidden_states)
+             value_ref = self.to_v_ref(reference_hidden_states)
+diff --git a/mvadapter/pipelines/pipeline_mvadapter_i2mv_sdxl.py b/mvadapter/pipelines/pipeline_mvadapter_i2mv_sdxl.py
+--- a/mvadapter/pipelines/pipeline_mvadapter_i2mv_sdxl.py
++++ b/mvadapter/pipelines/pipeline_mvadapter_i2mv_sdxl.py
+@@ -70,6 +70,21 @@ def retrieve_latents(
+         raise AttributeError("Could not access latents of provided encoder_output")
+ 
+ 
++class RefCache:
++    """Reference hidden states keyed by attention processor name; `cfg` is
++    True when the denoising batch holds an unconditional half first."""
++
++    def __init__(self):
++        self.states = {}
++        self.cfg = False
++
++    def __setitem__(self, key, value):
++        self.states[key] = value
++
++    def __getitem__(self, key):
++        return self.states[key]
++
++
+ class MVAdapterI2MVSDXLPipeline(StableDiffusionXLPipeline, CustomAdapterMixin):
+     def __init__(
+         self,
+@@ -621,7 +636,7 @@ class MVAdapterI2MVSDXLPipeline(StableDiffusionXLPipeline, CustomAdapterMixin):
+ 
+         with torch.no_grad():
+             ref_timesteps = torch.zeros_like(timesteps[0])
+-            ref_hidden_states = {}
++            ref_hidden_states = RefCache()
+ 
+             self.unet(
+                 reference_latents,
+@@ -638,19 +653,12 @@ class MVAdapterI2MVSDXLPipeline(StableDiffusionXLPipeline, CustomAdapterMixin):
+                 },
+                 return_dict=False,
+             )
+-            ref_hidden_states = {
+-                k: v.repeat_interleave(num_images_per_prompt, dim=0)
+-                for k, v in ref_hidden_states.items()
+-            }
+-        if self.do_classifier_free_guidance:
+-            ref_hidden_states = {
+-                k: torch.cat([torch.zeros_like(v), v], dim=0)
+-                for k, v in ref_hidden_states.items()
+-            }
++        # One [1, N, C] reference state per layer; the attention processors expand it to the batch.
++        ref_hidden_states.cfg = self.do_classifier_free_guidance
+ 
+         cross_attention_kwargs = {
+             "mv_scale": mv_scale,
+-            "ref_hidden_states": {k: v.clone() for k, v in ref_hidden_states.items()},
++            "ref_hidden_states": ref_hidden_states,
+             "ref_scale": reference_conditioning_scale,
+             "num_views": num_images_per_prompt,
+             **(self.cross_attention_kwargs or {}),
+diff --git a/mvadapter/utils/mesh_utils/blend.py b/mvadapter/utils/mesh_utils/blend.py
+--- a/mvadapter/utils/mesh_utils/blend.py
++++ b/mvadapter/utils/mesh_utils/blend.py
+@@ -3,8 +3,11 @@ from abc import ABC, abstractmethod
+ 
+ import torch
+ import torch.nn.functional as F
+-import triton
+-import triton.language as tl
++try:
++    import triton
++    import triton.language as tl
++except ImportError:
++    triton = None
+ from torch.utils.cpp_extension import load_inline
+ 
+ from .utils import SINGLE_IMAGE_TYPE, image_to_tensor

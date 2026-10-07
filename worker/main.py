@@ -2,11 +2,12 @@
 Download mode: `main.py <env> download <stage>`. Every `run` has an `id` unique within the Worker process; a `cancel`
 names that id. Standard library only.
 
-A stage is the module `<root>/stages/<env>/<stage>.py`. It declares `KEEP_LOADED` (True or False) and the function
-`run(ctx, **args)`; with a model it also has `load()` (returns the model, which `run` finds as `ctx.model`) and
-`download()`. The model of a stage with KEEP_LOADED True stays loaded for the life of the process. The model of a stage
-with KEEP_LOADED False is the only one of its kind: running another stage with KEEP_LOADED False drops it first; running
-a stage with KEEP_LOADED True does not."""
+A stage is the module `<root>/stages/<env>/<stage>.py` with the function `run(ctx, **args)`. A stage with a model also
+has `load()` (returns the model, which `run` finds as `ctx.model`), `download()` and `KEEP_LOADED` (True or False); a
+stage without a model has none of them and `ctx.model` is None. A model is loaded before the first run of its stage
+and stays loaded until another model is loaded: loading the model of a stage with KEEP_LOADED False first drops every
+loaded model of a stage with KEEP_LOADED False; the models of stages with KEEP_LOADED True stay loaded for the life of
+the process."""
 import gc
 import importlib.util
 import json
@@ -56,10 +57,17 @@ def release_memory():
         torch._C._host_emptyCache()
 
 
-def drop_model(loaded):
-    """Releases the loaded model."""
-    loaded["stage"] = loaded["model"] = None
-    release_memory()
+def load_model(env, stage, module, models, ctx):
+    """Loads the model of `stage` into `models` (models by stage name), first dropping the models of the stages with
+    KEEP_LOADED False when the stage itself has KEEP_LOADED False."""
+    if not module.KEEP_LOADED:
+        dropped = [name for name in models if not stage_module(env, name).KEEP_LOADED]
+        for name in dropped:
+            del models[name]
+        if dropped:
+            release_memory()
+    ctx.progress(0.0, f"loading {stage}")
+    models[stage] = module.load()
 
 
 def error_kind(error):
@@ -72,28 +80,18 @@ def error_kind(error):
     return "failed"
 
 
-def run_stage(env, message, send, cancelled, kept, loaded):
-    """Runs one `run` message and sends its `done` or `error` message. `kept` holds the models of the stages with
-    KEEP_LOADED True by stage name; `loaded` holds the stage and the model of the last stage with KEEP_LOADED False."""
+def run_stage(env, message, send, cancelled, models):
+    """Runs one `run` message and sends its `done` or `error` message. `models` holds the loaded models by stage
+    name."""
     started = time.monotonic()
     run_id, stage = message["id"], message["stage"]
     ctx = Context(run_id, Path(message["dir"]), send, cancelled)
     failed = False
     try:
         module = stage_module(env, stage)
-        if module.KEEP_LOADED:
-            if stage not in kept:
-                ctx.progress(0.0, f"loading {stage}")
-                kept[stage] = module.load()
-            ctx.model = kept[stage]
-        else:
-            if loaded["stage"] != stage:
-                drop_model(loaded)
-                if hasattr(module, "load"):
-                    ctx.progress(0.0, f"loading {stage}")
-                    loaded["model"] = module.load()
-                loaded["stage"] = stage
-            ctx.model = loaded["model"]
+        if hasattr(module, "load") and stage not in models:
+            load_model(env, stage, module, models, ctx)
+        ctx.model = models.get(stage)
         result = module.run(ctx, **message["args"])
         send({"type": "done", "id": run_id, "result": result, "seconds": time.monotonic() - started})
     except Exception as error:
@@ -130,10 +128,10 @@ def serve(env):
         protocol.write(json.dumps(message) + "\n")
         protocol.flush()
 
-    requests, cancelled, kept, loaded = queue.Queue(), set(), {}, {"stage": None, "model": None}
+    requests, cancelled, models = queue.Queue(), set(), {}
     threading.Thread(target=read_requests, args=(requests, cancelled), daemon=True).start()
     while (message := requests.get()) is not None:
-        run_stage(env, message, send, cancelled, kept, loaded)
+        run_stage(env, message, send, cancelled, models)
 
 
 def download(env, stage):

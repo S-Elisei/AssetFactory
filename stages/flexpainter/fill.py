@@ -1,0 +1,248 @@
+"""Stage fill: completes the texels that the projection of `bake` left empty with FlexPainter's outpainter (TEXGen
+finetuned for UV texture completion at SIZE x SIZE) and writes the textured mesh as `mesh.glb`. The input mesh's
+vertices, faces and UVs are kept; its materials, textures and vertex colors are dropped; the material has the completed
+atlas as base color, metallic 0 and roughness 1.
+
+Steps in order: the projection is reduced to SIZE (a texel is known when at least KNOWN_SHARE of the texels it covers
+are valid; its color is the mean of those); the CLIP embeddings of the views on black are averaged; the outpainter samples
+the SIZE atlas conditioned on the known texels, the embeddings and the mesh positions; every covered texel that the
+projection left empty takes the outpainter's color, bilinearly enlarged to the atlas size; the atlas grows GROW texels
+past the UV layout by repeated averaging of filled neighbors.
+
+The `atlas`, `covered` and `valid` files are the outputs of `bake`; the atlas size is a multiple of SIZE. The `views`
+are RGBA image files whose alpha is the silhouette of the mesh; the color is read on black where the alpha is 0.
+
+The outpainter and the CLIP models run in evaluation mode. The weights of every model stay in memory maps of safetensors
+files; `run` copies the weights of a model to the GPU for the time that model runs. `load` and `download` do not use the
+Worker context."""
+import json
+from pathlib import Path
+from types import SimpleNamespace
+
+import cv2
+import mapped
+import meshops
+import numpy as np
+import torch
+import torch.nn.functional as F
+from accelerate import init_empty_weights
+from context import MODELS
+from huggingface_hub import hf_hub_download, snapshot_download
+from model.clip import ClipTokenizer
+from model.outpainter_net import OutpainterNet
+from open_clip.model import _build_vision_tower
+from PIL import Image
+from pipeline.outpainter import OutpainterPipe
+from spuv.mesh_utils import vertex_transform
+from spuv.nvdiffrast_utils import rasterize_geometry_maps
+from spuv.rasterize import NVDiffRasterizerContext
+from transformers import CLIPImageProcessor, CLIPVisionConfig, CLIPVisionModelWithProjection
+
+KEEP_LOADED = False
+REPO = "StarYDY/FlexPainter"
+CHECKPOINT = "outpainter/texgen_v1.ckpt"
+OPEN_CLIP_REPO = "laion/CLIP-ViT-H-14-laion2B-s32B-b79K"
+OPEN_CLIP_FILES = ["open_clip_config.json", "open_clip_model.safetensors"]
+ENCODER_REPO = "lambdalabs/sd-image-variations-diffusers"
+ENCODER_FILES = ["image_encoder/config.json", "image_encoder/pytorch_model.bin",
+                 "feature_extractor/preprocessor_config.json"]
+# Folder that download() writes and load() reads: the EMA weights of the outpainter in fp32 and the weights of the CLIP
+# image encoder in bf16, each as one safetensors file.
+FOLDER = MODELS / "flexpainter"
+OUTPAINTER_WEIGHTS = FOLDER / "outpainter.safetensors"
+ENCODER_WEIGHTS = FOLDER / "image_encoder.safetensors"
+DEVICE = torch.device("cuda")
+
+# Configuration of the outpainter network. Documented.
+OUTPAINTER = {
+    "in_channels": 10,
+    "out_channels": 3,
+    "num_layers": [1, 1, 1, 1, 1],
+    "point_block_num": [1, 1, 2, 4, 6],
+    "block_out_channels": [32, 256, 1024, 1024, 2048],
+    "dropout": [0.0, 0.0, 0.0, 0.1, 0.1],
+    "use_uv_head": True,
+    "block_type": ["uv", "point_uv", "uv_dit", "uv_dit", "uv_dit"],
+    "voxel_size": [0.01, 0.02, 0.05, 0.05, 0.05],
+    "window_size": [0, 256, 256, 512, 1024],
+    "num_heads": [4, 4, 16, 16, 16],
+    "skip_input": True,
+    "skip_type": "adaptive",
+    "weights": None,
+}
+# Side in texels of the outpainter's atlas, sampling steps, guidance scale and guidance interval, guidance rescale, seed
+# and bounding-box half size of the mesh positions. Documented.
+SIZE = 1024
+STEPS = 30
+CFG_SCALE = 3.5
+GUIDANCE_INTERVAL = (0.0, 1.0)
+GUIDANCE_RESCALE = 0.0
+SEED = 42
+MESH_SCALE = 0.5
+# Share of valid texels from which a reduced texel counts as known, and the number of texels the atlas grows past the UV
+# layout. Guessed.
+KNOWN_SHARE = 0.5
+GROW = 16
+
+
+def _encoder(directory):
+    """Returns the CLIP image encoder of the checkpoint folder `directory`, built without weights."""
+    with init_empty_weights():
+        return CLIPVisionModelWithProjection(CLIPVisionConfig.from_pretrained(directory / "image_encoder"))
+
+
+def download():
+    """Fetches the checkpoints and writes the files `load` reads; files already written are kept. The outpainter file
+    holds the EMA weights under the network's parameter names."""
+    checkpoint = hf_hub_download(REPO, CHECKPOINT)
+    snapshot_download(OPEN_CLIP_REPO, allow_patterns=OPEN_CLIP_FILES)
+    encoder = Path(snapshot_download(ENCODER_REPO, allow_patterns=ENCODER_FILES))
+    FOLDER.mkdir(parents=True, exist_ok=True)
+    if not OUTPAINTER_WEIGHTS.exists():
+        state = torch.load(checkpoint, map_location="cpu", mmap=True, weights_only=True)["state_dict"]
+        names = [key[len("backbone."):] for key in state if key.startswith("backbone.")]
+        mapped.save_weights(OUTPAINTER_WEIGHTS,
+                            {name: state["backbone_ema." + name.replace(".", "")] for name in names})
+    if not ENCODER_WEIGHTS.exists():
+        state = torch.load(encoder / "image_encoder" / "pytorch_model.bin", map_location="cpu", mmap=True,
+                           weights_only=True)
+        mapped.save_weights(ENCODER_WEIGHTS,
+                            {name: state[name].to(torch.bfloat16) for name in _encoder(encoder).state_dict()})
+
+
+class _Clip:
+    """The CLIP embeddings of FlexPainter's ClipTokenizer over the models of this stage: `process_image` (CLIP image
+    encoder) and `process_pseudo_text` (OpenCLIP image tower)."""
+
+    process_image = ClipTokenizer.process_image
+    process_pseudo_text = ClipTokenizer.process_pseudo_text
+
+    def __init__(self, image_encoder, extractor, visual, preprocess):
+        self.device = DEVICE
+        self.weight_dtype = torch.bfloat16
+        self.clip_image_mean = torch.as_tensor(extractor.image_mean)[:, None, None].to(DEVICE, dtype=torch.bfloat16)
+        self.clip_image_std = torch.as_tensor(extractor.image_std)[:, None, None].to(DEVICE, dtype=torch.bfloat16)
+        self.openclip_image_mean = torch.tensor(preprocess["mean"], device=DEVICE)[:, None, None]
+        self.openclip_image_std = torch.tensor(preprocess["std"], device=DEVICE)[:, None, None]
+        self.openclip_image_size = visual.image_size[0]
+        self.image_encoder, self.visual = image_encoder, visual
+        self._models = {"image_encoder": image_encoder, "feature_extractor": extractor,
+                        "openclip_model": SimpleNamespace(encode_image=visual)}
+
+    def non_module(self, name):
+        return self._models[name]
+
+
+def load():
+    """Returns {"outpainter": the outpainter network, "clip": the _Clip embedder}. The parameters of the outpainter,
+    of the CLIP image encoder (bf16) and of the OpenCLIP image tower point to memory maps of their weights."""
+    encoder_directory = Path(snapshot_download(ENCODER_REPO, allow_patterns=ENCODER_FILES))
+    open_clip_directory = Path(snapshot_download(OPEN_CLIP_REPO, allow_patterns=OPEN_CLIP_FILES))
+    config = json.loads((open_clip_directory / "open_clip_config.json").read_text(encoding="utf-8"))
+    with init_empty_weights():
+        outpainter = OutpainterNet(OUTPAINTER)
+        visual = _build_vision_tower(config["model_cfg"]["embed_dim"], config["model_cfg"]["vision_cfg"])
+    image_encoder = _encoder(encoder_directory)
+    mapped.attach(outpainter, mapped.map_tensors([OUTPAINTER_WEIGHTS]))
+    mapped.attach(image_encoder, mapped.map_tensors([ENCODER_WEIGHTS]))
+    tensors = mapped.map_tensors([open_clip_directory / "open_clip_model.safetensors"])
+    mapped.attach(visual, {key[len("visual."):]: tensor for key, tensor in tensors.items()
+                           if key.startswith("visual.")})
+    for buffer in image_encoder.buffers():
+        buffer.data = buffer.data.to(DEVICE)
+    extractor = CLIPImageProcessor.from_pretrained(encoder_directory, subfolder="feature_extractor")
+    clip = _Clip(image_encoder.eval(), extractor, visual.eval(), config["preprocess_cfg"])
+    return {"outpainter": outpainter.eval(), "clip": clip}
+
+
+class _Steps:
+    """The progress bar of OutpainterPipe: reports each finished sampling step and raises Cancelled when the run was
+    cancelled."""
+
+    def __init__(self, ctx):
+        self.ctx, self.total, self.done = ctx, 0, 0
+
+    def update(self, count):
+        self.done += count
+        self.ctx.check_cancel()
+        self.ctx.progress(0.3 + 0.55 * self.done / self.total, f"sampling step {self.done}/{self.total}")
+
+
+def _views_on_black(paths):
+    """Returns the (N, 3, H, W) float tensor on the GPU of the RGBA images `paths` composited on black."""
+    views = []
+    for path in paths:
+        rgba = torch.from_numpy(np.asarray(Image.open(path).convert("RGBA"))).to(DEVICE).float() / 255
+        views.append((rgba[..., :3] * rgba[..., 3:]).permute(2, 0, 1))
+    return torch.stack(views)
+
+
+def _geometry(vertices, faces, normals, uv):
+    """Returns (position, mask): the (1, 3, SIZE, SIZE) mesh position map of the UV layout, with the mesh in
+    FlexPainter's frame, and the (1, 1, SIZE, SIZE) float mask of the texels inside a UV triangle. Both have row 0 at
+    v = 0."""
+    to_device = lambda array, dtype: torch.tensor(array, dtype=dtype, device=DEVICE)
+    mesh = vertex_transform({
+        "v_pos": to_device(vertices, torch.float32), "t_pos_idx": to_device(faces, torch.int32),
+        "v_norm": to_device(normals, torch.float32), "_v_tex": to_device(uv, torch.float32),
+        "_t_tex_idx": to_device(faces, torch.int32)}, mesh_scale=MESH_SCALE)
+    position, _, mask = rasterize_geometry_maps(NVDiffRasterizerContext("cuda", DEVICE), mesh, SIZE, SIZE)
+    return position.permute(0, 3, 1, 2), mask.float().permute(0, 3, 1, 2)
+
+
+def run(ctx, mesh, atlas, covered, valid, views):
+    vertices, faces, uv = meshops.load_glb(mesh)
+    normals = meshops.welded_normals(vertices, faces)
+    colors = np.asarray(Image.open(atlas).convert("RGB"), np.float32) / 255
+    covered_texels = np.asarray(Image.open(covered)) > 127
+    valid_texels = np.asarray(Image.open(valid)) > 127
+    factor = colors.shape[0] // SIZE
+
+    ctx.progress(0.0, "preparing the maps")
+    position, mask = _geometry(vertices, faces, normals, uv)
+    valid_map = torch.from_numpy(valid_texels[::-1].copy()).float().to(DEVICE)[None, None]
+    color_map = torch.from_numpy(colors[::-1].copy()).to(DEVICE).permute(2, 0, 1)[None]
+    share = F.avg_pool2d(valid_map, factor)
+    baked_weight = (share >= KNOWN_SHARE).float() * mask
+    baked_image = F.avg_pool2d(color_map * valid_map, factor) / share.clamp(min=1e-6) * baked_weight
+    del valid_map, color_map, share
+    ctx.check_cancel()
+
+    pipe = OutpainterPipe.__new__(OutpainterPipe)
+    pipe.device, pipe.dtype, pipe.clip = DEVICE, torch.bfloat16, ctx.model["clip"]
+    ctx.progress(0.1, "encoding the views")
+    with mapped.on_gpu(DEVICE, pipe.clip.image_encoder, pipe.clip.visual), torch.no_grad():
+        condition = pipe.prepare_condition_info(None, None, _views_on_black(views), baked_image, baked_weight)
+    pipe.prepare_condition_info = lambda *_: condition
+    pipe.outpainter, pipe.pbar = ctx.model["outpainter"], _Steps(ctx)
+    ctx.check_cancel()
+
+    ctx.progress(0.3, "sampling")
+    torch.manual_seed(SEED)
+    with mapped.on_gpu(DEVICE, pipe.outpainter):
+        sampled = pipe(None, None, None, baked_image, baked_weight, mask, position, STEPS, CFG_SCALE, GUIDANCE_INTERVAL,
+                       GUIDANCE_RESCALE)
+
+    ctx.progress(0.85, "completing the atlas")
+    sampled, mask = sampled.flip(2), mask.flip(2)
+    enlarged = F.interpolate(sampled * mask, scale_factor=factor, mode="bilinear", align_corners=False)
+    enlarged_mask = F.interpolate(mask, scale_factor=factor, mode="bilinear", align_corners=False)
+    fill = (enlarged / enlarged_mask.clamp(min=1e-6))[0].permute(1, 2, 0).cpu().numpy()
+    missing = covered_texels & ~valid_texels & (enlarged_mask[0, 0].cpu().numpy() > 0)
+    texture = np.where(valid_texels[..., None], colors, 0.0).astype(np.float32)
+    texture[missing] = fill[missing]
+    known = (valid_texels | missing).astype(np.float32)
+    for _ in range(GROW):
+        smooth = cv2.blur(texture * known[..., None], (3, 3))
+        weight = cv2.blur(known, (3, 3))
+        grow = (known == 0) & (weight > 0)
+        texture[grow] = smooth[grow] / weight[grow][:, None]
+        known[grow] = 1
+    ctx.check_cancel()
+
+    ctx.progress(0.97, "writing")
+    path = ctx.dir / "mesh.glb"
+    meshops.write_glb(path, vertices, faces, normals, uv, Image.fromarray((texture.clip(0, 1) * 255).round()
+                                                                          .astype(np.uint8)))
+    return {"mesh": str(path), "vertices": len(vertices), "faces": len(faces), "texture_size": colors.shape[0],
+            "filled_texels": int(missing.sum())}

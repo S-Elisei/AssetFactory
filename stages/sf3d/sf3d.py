@@ -1,6 +1,7 @@
 """Stage sf3d: a UV-unwrapped GLB with a base-color texture and a normal map of one object from an RGBA image with
 stable-fast-3d. The object is recentered and scaled to `foreground_ratio`. The mesh is rotated by `input_elevation_deg`
 about the X axis, then by 180 degrees about the Y axis. The mesh is not cleaned."""
+import mapped
 import numpy as np
 import torch
 import trimesh
@@ -10,7 +11,6 @@ from huggingface_hub import hf_hub_download
 from omegaconf import OmegaConf
 from PIL import Image
 from safetensors import safe_open
-from safetensors.torch import save_file
 from sf3d.system import SF3D
 from sf3d.utils import resize_foreground
 
@@ -41,9 +41,7 @@ def download():
         with safe_open(source, "pt") as file:
             tensors = {key: file.get_tensor(key).to(torch.bfloat16) if key.split(".")[0] in BF16_PARTS
                        else file.get_tensor(key) for key in file.keys() if not key.startswith(UNUSED)}
-        partial = BF16_WEIGHTS.with_name(BF16_WEIGHTS.name + ".part")
-        save_file(tensors, partial, metadata={"format": "pt"})
-        partial.replace(BF16_WEIGHTS)
+        mapped.save_weights(BF16_WEIGHTS, tensors)
 
 
 def load():

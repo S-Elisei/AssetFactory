@@ -9,7 +9,6 @@ returns. The reference image is the view from +Z (Y up).
 
 The weights of every model stay in memory maps of safetensors files; `run` copies the weights of a model to the GPU for
 the time that model runs. `load` and `download` do not use the Worker context."""
-from contextlib import contextmanager
 from functools import partial
 from pathlib import Path
 
@@ -31,7 +30,6 @@ from hy3dgen.texgen.hunyuanpaint.unet.modules import UNet2p5DConditionModel
 from hy3dgen.texgen.utils.dehighlight_utils import Light_Shadow_Remover
 from PIL import Image
 from safetensors import safe_open
-from safetensors.torch import save_file
 from transformers import CLIPTextConfig, CLIPTextModel, CLIPTokenizer
 
 REPO = "tencent/Hunyuan3D-2"
@@ -98,9 +96,7 @@ def download():
             if key == "paint_vae":
                 with init_empty_weights():
                     _from_config(AutoencoderKL, snapshot / PAINT / "vae")._fix_state_dict_keys_on_load(state)
-            partial_file = target.with_name(target.name + ".part")
-            save_file(state, partial_file, metadata={"format": "pt"})
-            partial_file.replace(target)
+            mapped.save_weights(target, state)
 
 
 def _mapped(factory, weights):
@@ -150,18 +146,10 @@ def load():
     return {"delight": delight, "multiview": multiview}
 
 
-@contextmanager
 def _on_gpu(pipeline):
-    """Holds the weights of the models of `pipeline` on the GPU for the duration of the block."""
-    models = [model for model in (pipeline.text_encoder, pipeline.unet, pipeline.vae) if model is not None]
-    try:
-        for model in models:
-            mapped.to_device(model, DEVICE)
-        yield
-    finally:
-        for model in models:
-            mapped.to_host(model)
-        torch.cuda.empty_cache()
+    """Returns the context manager that holds the weights of the models of `pipeline` on the GPU for its block."""
+    return mapped.on_gpu(DEVICE, *[model for model in (pipeline.text_encoder, pipeline.unet, pipeline.vae)
+                                   if model is not None])
 
 
 def _on_step(ctx, start, end, label):

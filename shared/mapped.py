@@ -1,14 +1,17 @@
 """Weights held in memory maps of their safetensors files: a model built without weights takes its parameters and
-buffers from read-only memory maps, and moves its parameters and buffers to the GPU and back to the maps. Imports torch
-and the standard library only."""
+buffers from read-only memory maps, and moves its parameters and buffers to the GPU and back to the maps; safetensors
+files of such weights are written here too. Imports torch, safetensors and the standard library only."""
 import json
 import mmap
 import struct
+from contextlib import contextmanager
 
 import torch
+from safetensors.torch import save_file
 
 # The dtype of each safetensors header type name that torch.frombuffer reads.
-DTYPES = {"F16": torch.float16, "BF16": torch.bfloat16, "I64": torch.int64}
+DTYPES = {"F32": torch.float32, "F16": torch.float16, "BF16": torch.bfloat16, "F8_E4M3": torch.float8_e4m3fn,
+          "I64": torch.int64}
 
 
 def map_tensors(paths):
@@ -54,3 +57,25 @@ def to_host(module, recurse=True):
     """Points the attached tensors of `module` (of its submodules too when `recurse`) back to their memory maps."""
     for tensor in _held(module, recurse):
         tensor.data = tensor.host
+
+
+@contextmanager
+def on_gpu(device, *models):
+    """Holds the attached tensors of `models` on `device` for the duration of the block, then points them back to their
+    memory maps and empties the CUDA cache."""
+    try:
+        for model in models:
+            to_device(model, device)
+        yield
+    finally:
+        for model in models:
+            to_host(model)
+        torch.cuda.empty_cache()
+
+
+def save_weights(path, tensors):
+    """Writes the safetensors file `path` with `tensors`, through `<path>.part`, so that `path` exists only when
+    complete."""
+    partial = path.with_name(path.name + ".part")
+    save_file(tensors, partial, metadata={"format": "pt"})
+    partial.replace(path)

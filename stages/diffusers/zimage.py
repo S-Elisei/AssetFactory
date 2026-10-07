@@ -5,13 +5,13 @@ import shutil
 from pathlib import Path
 
 import diffusers_common as common
+import mapped
 import torch
 from context import MODELS, InputError
 from diffusers import AutoencoderKL, ZImageImg2ImgPipeline, ZImagePipeline, ZImageTransformer2DModel
 from huggingface_hub import snapshot_download
 from PIL import Image
 from safetensors import safe_open
-from safetensors.torch import save_file
 
 REPO = "Tongyi-MAI/Z-Image-Turbo"
 KEEP_LOADED = False
@@ -32,9 +32,7 @@ def download():
         if not target.exists():
             with safe_open(shard, "pt") as file:
                 tensors = {key: file.get_tensor(key).to(torch.bfloat16) for key in file.keys()}
-            partial = target.with_name(shard.name + ".part")
-            save_file(tensors, partial, metadata={"format": "pt"})
-            partial.replace(target)
+            mapped.save_weights(target, tensors)
     for name in ("config.json", "diffusion_pytorch_model.safetensors.index.json"):
         shutil.copyfile(source / name, BF16_TRANSFORMER / name)
 

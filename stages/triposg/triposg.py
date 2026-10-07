@@ -6,6 +6,7 @@ import shutil
 from pathlib import Path
 
 import cv2
+import mapped
 import numpy as np
 import torch
 import trimesh
@@ -14,7 +15,7 @@ from context import MODELS
 from huggingface_hub import snapshot_download
 from PIL import Image
 from safetensors import safe_open
-from safetensors.torch import load_file, save_file
+from safetensors.torch import load_file
 from transformers import BitImageProcessor, Dinov2Config, Dinov2Model
 from triposg.models.autoencoders import TripoSGVAEModel
 from triposg.models.transformers import TripoSGDiTModel
@@ -53,9 +54,7 @@ def download():
             with safe_open(snapshot / name / weights, "pt") as file:
                 tensors = {key: file.get_tensor(key).to(torch.float16) for key in file.keys()
                            if key.split(".")[0] not in UNUSED.get(name, ())}
-            partial = target / (weights + ".part")
-            save_file(tensors, partial, metadata={"format": "pt"})
-            partial.replace(target / weights)
+            mapped.save_weights(target / weights, tensors)
         shutil.copyfile(snapshot / name / "config.json", target / "config.json")
 
 

@@ -1,0 +1,27 @@
+diff --git a/setup.py b/setup.py
+--- a/setup.py
++++ b/setup.py
+@@ -37,5 +37,5 @@
+ extra_compile_args = {
+     "cxx": ["-g", "-O3", "-fopenmp", "-lgomp"],
+-    "nvcc": ["-O3", "-std=c++17"],
++    "nvcc": ["-O3", "-std=c++20", "-D__asm__=asm", "-D__volatile__=volatile"],
+ }
+ 
+diff --git a/torchsparse/backend/others/downsample_cuda.cu b/torchsparse/backend/others/downsample_cuda.cu
+--- a/torchsparse/backend/others/downsample_cuda.cu
++++ b/torchsparse/backend/others/downsample_cuda.cu
+@@ -170,5 +170,5 @@
+       N, kernel_volume, in_coords, kernel_sizes, stride,
+       coords_min, coords_max, padding,
+-      n_out_points, _out_coords_transformed.data_ptr<long>());
++      n_out_points, _out_coords_transformed.data_ptr<int64_t>());
+ 
+   int n_out_points_scalar = (int)_n_out_points.item<int>();
+@@ -184,5 +184,5 @@
+ 
+   inverse_transform_coords_kernel<<<int(ceil((double)num_out_points / 256)), 256>>>(
+-      num_out_points, _out_coords_transformed.data_ptr<long>(),
++      num_out_points, _out_coords_transformed.data_ptr<int64_t>(),
+       coords_min, coords_max, out_coords);
+ 
