@@ -51,9 +51,9 @@ through a REST API and a web UI.
    4. `flux2_image_edit.py`
    5. `triposg_shape.py` — `bgremove` → triposg → `clean` → `decimate`
    6. `hy2_shape.py` — `bgremove` → hunyuan3d-2 → `clean` → `decimate`
-   7. `hy2_textured.py` — `bgremove` → hunyuan3d-2 → `clean` → `decimate` → Hunyuan3D-Paint
+   7. `hy2_textured.py` — `bgremove` → hunyuan3d-2 → `clean` → `decimate` → `unwrap` → Hunyuan3D-Paint
    8. `hy2mv_shape.py` — `bgremove` → hunyuan3d-2mv → `clean` → `decimate`
-   9. `hy2mv_textured.py` — `bgremove` → hunyuan3d-2mv → `clean` → `decimate` → Hunyuan3D-Paint
+   9. `hy2mv_textured.py` — `bgremove` → hunyuan3d-2mv → `clean` → `decimate` → `unwrap` → Hunyuan3D-Paint
    10. `trellis2_shape.py` — trellis2 (cloud) → `clean` → `decimate`
    11. `hy21_shape.py` — hunyuan3d-2.1 (cloud) → `clean` → `decimate`
    12. `sf3d_textured.py` — `bgremove` → sf3d
