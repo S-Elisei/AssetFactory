@@ -99,8 +99,8 @@ through a REST API and a web UI.
     - file upload;
     - queue and history;
     - result viewing: GLB in model-viewer, images, audio.
-14. **CLI** — installs environments and weights; runs a smoke test of a job on reference inputs. A job whose
-    environment or weights are absent is refused with the install command.
+14. **CLI** — installs environments and weights. A job whose environment or weights are absent is refused with the
+    install command.
 15. **Shutdown** (Ctrl+C): cloud calls are cancelled with their containers terminated, the idle containers of the Modal
     apps are stopped, every `Worker` is stopped. At start, jobs left unfinished in `Store` are marked failed with
     "factory stopped".

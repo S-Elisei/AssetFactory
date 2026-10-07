@@ -6,7 +6,7 @@ file:
 - app marker `<MODELS>/.installed/cloud/<app>`: written after the weights download and the deploy of the Modal app."""
 from core.layout import ENVS, MODELS, ROOT
 
-INSTALL = r"envs\core\Scripts\python.exe -m core.cli install"
+INSTALL = r"envs\core\Scripts\python.exe -m core.install"
 
 
 def env_marker(env):

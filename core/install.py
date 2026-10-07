@@ -1,7 +1,13 @@
-"""Install of local environments and of Modal apps. A step that fails stops the install and leaves no marker for it;
-the markers are those of `core.readiness`. Output of every step goes to the console."""
+r"""Install of local environments and of Modal apps: `envs\core\Scripts\python.exe -m core.install <target>`, run from
+the repository root. `target` is a local environment, a Modal app, or `all` (every local environment, and every Modal
+app that is not ready). An environment runs its install and build only when its env marker is absent, and downloads
+only the stages whose weights markers are absent; a Modal app named explicitly is deployed again. A step that fails
+stops the install with its exit code and leaves no marker for it; the markers are those of `core.readiness`. Output of
+every step goes to the console."""
+import argparse
 import importlib
 import subprocess
+import sys
 
 import modal
 
@@ -74,3 +80,19 @@ def install_all():
     for app in cloud_apps():
         if app_readiness(app) is not None:
             install_app(app)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(prog="core.install", description="Installs environments and Modal apps.")
+    parser.add_argument("target", choices=["all", *local_envs(), *cloud_apps()])
+    target = parser.parse_args().target
+    try:
+        if target == "all":
+            install_all()
+        elif target in local_envs():
+            install_env(target)
+        else:
+            install_app(target)
+    except subprocess.CalledProcessError as error:
+        print(f"stopped: {subprocess.list2cmdline(error.cmd)} exited with code {error.returncode}", file=sys.stderr)
+        sys.exit(error.returncode)
