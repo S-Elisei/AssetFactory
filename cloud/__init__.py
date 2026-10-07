@@ -1,13 +1,15 @@
 """The Modal apps of the cloud stages, one module each: `trellis2`, `hunyuan3d21`, `unitex`. A module imports `modal` and
 the standard library at the top level; everything else is imported inside the functions that run in the container.
 
-Every module defines `APP_NAME`, `app` (the `modal.App`), `GPU`, `CPU`, `MEMORY_MIB` and `SCALEDOWN_SECONDS` (the
-container's resources and the seconds it stays up without a call), the class named below with the remote method `run`,
-and the function `download_weights`.
+Every module defines `APP_NAME`, `app` (the `modal.App` that holds the class named below, with the remote method
+`run`), `GPU`, `CPU`, `MEMORY_MIB` and `SCALEDOWN_SECONDS` (the container's resources and the seconds it stays up
+without a call), and `WEIGHTS_APP_NAME` and `weights_app`, a second `modal.App` with the same image and Volume that holds
+only the function `download_weights`.
 
-Deploy and install: `app.deploy()` of the module's `app`; then once, and again to complete an interrupted download,
-`modal.Function.from_name(APP_NAME, "download_weights").remote(hf_token)`, which fills the app's Modal Volume from
-Hugging Face with the token `hf_token` (a str) and returns None.
+Install: `core.cli install <app>` runs `with module.weights_app.run(): module.download_weights.remote(hf_token)`, which
+fills the app's Modal Volume from Hugging Face with the token `hf_token` (a str) and returns None, and then
+`module.app.deploy()`. Running the weights app registers no class that takes a memory snapshot, so no snapshot is taken
+while the Volume is empty. Install can be repeated to complete an interrupted download.
 
 Call: `modal.Cls.from_name(APP_NAME, CLASS)().run.spawn(..., progress)`, `.get()` on the result. Inputs are file
 contents as `bytes` and `params`, a dict of JSON-able values of exactly the keys listed here; `run` checks no param.

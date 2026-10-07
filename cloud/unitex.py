@@ -21,6 +21,7 @@ import modal
 
 APP_NAME = "assetfactory-unitex"
 VOLUME = "unitex-weights"
+WEIGHTS_APP_NAME = f"{APP_NAME}-weights"
 CLASS = "UniTEX"
 # GPU type, CPU cores, memory in MiB, seconds a container stays up without a call, and seconds a call or a container
 # start may take. The last four are guessed.
@@ -119,9 +120,10 @@ image = (
 )
 volume = modal.Volume.from_name(VOLUME, create_if_missing=True)
 app = modal.App(APP_NAME, image=image)
+weights_app = modal.App(WEIGHTS_APP_NAME, image=image)
 
 
-@app.function(volumes={WEIGHTS: volume}, memory=MEMORY_MIB, timeout=3600)
+@weights_app.function(volumes={WEIGHTS: volume}, memory=MEMORY_MIB, timeout=3600)
 def download_weights(hf_token):
     """Fetches the files that `load` reads into the Volume and writes the bf16 copy of the FLUX VAE (VAE_WEIGHTS); files
     already fetched or written are kept. The TSD-SR files come from the Google Drive folder TSDSR_DRIVE."""

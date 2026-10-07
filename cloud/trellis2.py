@@ -16,6 +16,7 @@ import modal
 
 APP_NAME = "assetfactory-trellis2"
 VOLUME = "assetfactory-trellis2-weights"
+WEIGHTS_APP_NAME = f"{APP_NAME}-weights"
 CLASS = "Trellis2"
 # GPU type, CPU cores, memory in MiB, seconds a container stays up without a call, and seconds a call or a container
 # start may take. The last four are guessed.
@@ -121,9 +122,10 @@ image = (
 )
 volume = modal.Volume.from_name(VOLUME, create_if_missing=True)
 app = modal.App(APP_NAME, image=image)
+weights_app = modal.App(WEIGHTS_APP_NAME, image=image)
 
 
-@app.function(volumes={WEIGHTS: volume}, timeout=3600)
+@weights_app.function(volumes={WEIGHTS: volume}, timeout=3600)
 def download_weights(hf_token):
     """Fetches the files that `load` reads into the Volume, writes the converted weight files and INDEX; files already
     written are kept. The converted file of a model holds the tensors of its weights file that have a parameter or
