@@ -35,9 +35,11 @@ class BaseParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+# The largest integer seed.
+SEED_MAX = 2**31 - 1
 # The type of the `seed` param of a job with a seeded stage. The Api replaces "random" in the params with an integer
 # when it creates the job; the Runner and the jobs see an integer.
-Seed = Annotated[int, Field(ge=0, le=2**31 - 1)] | Literal["random"]
+Seed = Annotated[int, Field(ge=0, le=SEED_MAX)] | Literal["random"]
 
 
 class Job:

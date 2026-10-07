@@ -7,3 +7,7 @@ trimesh==5.1.1
 numpy==2.5.3
 scipy==1.18.1
 pillow==12.3.0
+fastapi==0.141.1
+uvicorn==0.54.0
+python-multipart==0.0.32
+nvidia-ml-py==13.615.71
