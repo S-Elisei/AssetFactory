@@ -1,0 +1,136 @@
+diff --git a/hy3dgen/texgen/differentiable_renderer/mesh_render.py b/hy3dgen/texgen/differentiable_renderer/mesh_render.py
+--- a/hy3dgen/texgen/differentiable_renderer/mesh_render.py
++++ b/hy3dgen/texgen/differentiable_renderer/mesh_render.py
+@@ -237,6 +237,7 @@
+         scale_factor=1.15, auto_center=True
+     ):
+ 
++        self.abs_vertex_normals = None
+         self.vtx_pos = torch.from_numpy(vtx_pos).to(self.device).float()
+         self.pos_idx = torch.from_numpy(pos_idx).to(self.device).to(torch.int)
+         if (vtx_uv is not None) and (uv_idx is not None):
+@@ -442,30 +443,35 @@
+         rast_out, rast_out_db = self.raster_rasterize(
+             pos_clip, self.pos_idx, resolution=resolution)
+ 
+-        if use_abs_coor:
+-            mesh_triangles = self.vtx_pos[self.pos_idx[:, :3], :]
+-        else:
+-            pos_camera = pos_camera[:, :3] / pos_camera[:, 3:4]
+-            mesh_triangles = pos_camera[self.pos_idx[:, :3], :]
+-        face_normals = F.normalize(
+-            torch.cross(mesh_triangles[:,
+-                        1,
+-                        :] - mesh_triangles[:,
+-                             0,
+-                             :],
+-                        mesh_triangles[:,
+-                        2,
+-                        :] - mesh_triangles[:,
+-                             0,
+-                             :],
+-                        dim=-1),
+-            dim=-1)
+-
+-        vertex_normals = trimesh.geometry.mean_vertex_normals(vertex_count=self.vtx_pos.shape[0],
+-                                                              faces=self.pos_idx.cpu(),
+-                                                              face_normals=face_normals.cpu(), )
+-        vertex_normals = torch.from_numpy(
+-            vertex_normals).float().to(self.device).contiguous()
++        if use_abs_coor and self.abs_vertex_normals is not None:
++            vertex_normals = self.abs_vertex_normals
++        else:
++            if use_abs_coor:
++                mesh_triangles = self.vtx_pos[self.pos_idx[:, :3], :]
++            else:
++                pos_camera = pos_camera[:, :3] / pos_camera[:, 3:4]
++                mesh_triangles = pos_camera[self.pos_idx[:, :3], :]
++            face_normals = F.normalize(
++                torch.cross(mesh_triangles[:,
++                            1,
++                            :] - mesh_triangles[:,
++                                 0,
++                                 :],
++                            mesh_triangles[:,
++                            2,
++                            :] - mesh_triangles[:,
++                                 0,
++                                 :],
++                            dim=-1),
++                dim=-1)
++
++            vertex_normals = trimesh.geometry.mean_vertex_normals(vertex_count=self.vtx_pos.shape[0],
++                                                                  faces=self.pos_idx.cpu(),
++                                                                  face_normals=face_normals.cpu(), )
++            vertex_normals = torch.from_numpy(
++                vertex_normals).float().to(self.device).contiguous()
++            if use_abs_coor:
++                self.abs_vertex_normals = vertex_normals
+ 
+         # Interpolate normal values across the rasterized pixels
+         normal, _ = self.raster_interpolate(
+@@ -743,18 +749,15 @@
+             uv = uv.squeeze(0).contiguous().view(-1, 2)[proj_mask]
+             image = image.squeeze(0).contiguous().view(-1, channel)[proj_mask]
+             cos_image = cos_image.contiguous().view(-1, 1)[proj_mask]
+-            sketch_image = sketch_image.contiguous().view(-1, 1)[proj_mask]
+ 
+             texture = linear_grid_put_2d(
+                 self.texture_size[1], self.texture_size[0], uv[..., [1, 0]], image)
+             cos_map = linear_grid_put_2d(
+                 self.texture_size[1], self.texture_size[0], uv[..., [1, 0]], cos_image)
+-            boundary_map = linear_grid_put_2d(
+-                self.texture_size[1], self.texture_size[0], uv[..., [1, 0]], sketch_image)
+         else:
+             raise f'No bake mode {method}'
+ 
+-        return texture, cos_map, boundary_map
++        return texture, cos_map, None
+ 
+     def bake_texture(self, colors, elevs, azims,
+                      camera_distance=None, center=None, exp=6, weights=None):
+diff --git a/hy3dgen/texgen/hunyuanpaint/pipeline.py b/hy3dgen/texgen/hunyuanpaint/pipeline.py
+--- a/hy3dgen/texgen/hunyuanpaint/pipeline.py
++++ b/hy3dgen/texgen/hunyuanpaint/pipeline.py
+@@ -326,15 +326,6 @@
+ 
+         cached_condition['ref_latents'] = ref_latents
+ 
+-        if self.is_turbo:
+-            if 'position_maps' in cached_condition:
+-                cached_condition['position_attn_mask'] = (
+-                    compute_multi_resolution_mask(cached_condition['position_maps'])
+-                )
+-                cached_condition['position_voxel_indices'] = (
+-                    compute_multi_resolution_discrete_voxel_indice(cached_condition['position_maps'])
+-                )
+-            
+         if (guidance_scale > 1) and (not self.is_turbo):
+             negative_ref_latents = torch.zeros_like(cached_condition['ref_latents'])
+             cached_condition['ref_latents'] = torch.cat([negative_ref_latents, cached_condition['ref_latents']])
+@@ -635,6 +626,9 @@
+                 guidance_scale_tensor, embedding_dim=self.unet.config.time_cond_proj_dim
+             ).to(device=device, dtype=latents.dtype)
+ 
++        # The reference-view condition is computed in the first step and reused by the following steps.
++        kwargs['condition_embed_dict'] = {}
++
+         # 7. Denoising loop
+         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
+         self._num_timesteps = len(timesteps)
+diff --git a/hy3dgen/texgen/hunyuanpaint/unet/modules.py b/hy3dgen/texgen/hunyuanpaint/unet/modules.py
+--- a/hy3dgen/texgen/hunyuanpaint/unet/modules.py
++++ b/hy3dgen/texgen/hunyuanpaint/unet/modules.py
+@@ -523,10 +523,10 @@
+         encoder_hidden_states_gen = rearrange(encoder_hidden_states_gen, 'b n l c -> (b n) l c')
+ 
+         if self.use_ra:
+-            if 'condition_embed_dict' in cached_condition:
++            if cached_condition.get('condition_embed_dict'):
+                 condition_embed_dict = cached_condition['condition_embed_dict']
+             else:
+-                condition_embed_dict = {}
++                condition_embed_dict = cached_condition.setdefault('condition_embed_dict', {})
+                 ref_latents = cached_condition['ref_latents']
+                 N_ref = ref_latents.shape[1]
+                 if self.use_camera_embedding:
