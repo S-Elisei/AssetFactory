@@ -85,6 +85,8 @@ through a REST API and a web UI.
 12. **`Api`** (FastAPI):
     - `GET /api/usage` — the guide from `usage.md` and every schema in one response;
     - `GET /api/health`;
+    - `GET /api/jobs/schema` — every job's description, params JSON schema, inputs and outputs as JSON (the data
+      `/api/usage` renders);
     - `POST /api/files`, `GET /api/files?kind=&origin=`, `GET /api/files/{id}`, `GET /api/files/{id}/content`;
     - `POST /api/jobs {job, params, inputs, count?, priority?, label?, notify_url?}`;
     - `POST /api/batches` — all jobs are created or none; `GET /api/batches/{id}?wait=`;
