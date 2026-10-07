@@ -1,7 +1,7 @@
 """Stage bgremove: RGBA PNGs of the input images with the background removed by BiRefNet. An image with an alpha channel
 on which at least CUTOUT_FRACTION of the pixels are at alpha 0 is used as is. The model's weights stay in memory maps of
-the checkpoint file; `run` copies them to the GPU for its duration. `load` and `remove_background` do not use the Worker
-context."""
+the checkpoint file; `run` copies them to the GPU for its duration. `load`, `load_on_gpu` and `remove_background` do not
+use the Worker context."""
 from pathlib import Path
 
 import mapped
@@ -16,6 +16,8 @@ from transformers import AutoConfig, AutoModelForImageSegmentation
 
 REPO = "ZhengPeng7/BiRefNet"
 KEEP_LOADED = True
+# System RAM in GB that the Worker needs to start for this stage. Guessed.
+RAM_GB = 3.0
 # The files `load` reads: the model weights and its remote code.
 FILES = ["config.json", "BiRefNet_config.py", "birefnet.py", "model.safetensors"]
 # Side in pixels of the square model input. Documented.
@@ -44,6 +46,15 @@ def load():
     snapshot = Path(snapshot_download(REPO, allow_patterns=FILES))
     mapped.attach(model, mapped.map_tensors([snapshot / "model.safetensors"]))
     return model.eval()
+
+
+def load_on_gpu():
+    """Returns the model of `load` on the GPU for good: its tensors are copied there and the memory maps are released."""
+    model = load().to("cuda")
+    for tensor in (*model.parameters(), *model.buffers()):
+        if hasattr(tensor, "host"):
+            del tensor.host
+    return model
 
 
 def remove_background(model, image):

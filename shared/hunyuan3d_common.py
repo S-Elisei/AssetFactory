@@ -76,7 +76,7 @@ def load(repo, directory):
 
 def generate(ctx, pipeline, condition, steps, guidance_scale, octree_resolution, num_chunks, seed):
     """Runs `pipeline` on `condition` (a PIL image, or {view tag: PIL image} for the multiview DiT), writes the raw
-    mesh as `raw.glb` and returns {"mesh", "seed", "vertices", "faces"}. Vertices with a non-finite coordinate and the
+    mesh as `raw.glb` and returns {"mesh", "vertices", "faces"}. Vertices with a non-finite coordinate and the
     faces that use them are dropped."""
 
     def on_step(step, _timestep, _outputs):
@@ -111,4 +111,4 @@ def generate(ctx, pipeline, condition, steps, guidance_scale, octree_resolution,
     vertices = vertices[finite]
     path = ctx.dir / "raw.glb"
     trimesh.Trimesh(vertices, faces, process=False).export(path)
-    return {"mesh": str(path), "seed": seed, "vertices": len(vertices), "faces": len(faces)}
+    return {"mesh": str(path), "vertices": len(vertices), "faces": len(faces)}

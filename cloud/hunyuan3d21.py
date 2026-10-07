@@ -9,9 +9,9 @@ fp16. The models are built without weights and the tensors are loaded straight o
 docstring."""
 import time
 from pathlib import Path
-from queue import Full
 
 import modal
+from cloud import load_strict, read_image, run_call, silent
 
 APP_NAME = "assetfactory-hunyuan3d21"
 VOLUME = "assetfactory-hunyuan3d21-weights"
@@ -37,34 +37,6 @@ DIRECTORY = "hunyuan3d-dit-v2-1"
 WEIGHTS_FILE = Path(WEIGHTS) / "hunyuan3d21.safetensors"
 # Points of the shape volume that the VAE decoder evaluates per batch. Guessed.
 NUM_CHUNKS = 20000
-# Seconds between two progress messages that are not forced, and seconds a put of a message may take. Guessed.
-PROGRESS_INTERVAL = 0.5
-PROGRESS_TIMEOUT = 5.0
-
-
-def reporter(queue):
-    """Returns `report(fraction, message, force=False)`, which puts the tuple (fraction, message) on the modal.Queue
-    `queue`; a message that is not forced is dropped when the previous message was put less than PROGRESS_INTERVAL
-    seconds earlier, and a message whose put raises a Modal error or does not finish within PROGRESS_TIMEOUT seconds is
-    dropped."""
-    last = [float("-inf")]
-
-    def report(fraction, message, force=False):
-        now = time.monotonic()
-        if force or now - last[0] >= PROGRESS_INTERVAL:
-            last[0] = now
-            try:
-                queue.put((fraction, message), timeout=PROGRESS_TIMEOUT)
-            except (modal.Error, Full):
-                pass
-
-    return report
-
-
-def _silent(fraction, message, force=False):
-    pass
-
-
 image = (
     modal.Image.from_registry("nvidia/cuda:12.4.1-devel-ubuntu22.04", add_python="3.10")
     .apt_install("git", "libgl1", "libglib2.0-0")
@@ -118,16 +90,6 @@ def download_weights(hf_token):
     volume.commit()
 
 
-def _load(module, tensors):
-    """Deletes every top-level submodule of `module` that holds none of `tensors` (named as the state dict of `module`),
-    then loads `tensors` as the parameters and buffers of `module`, every one of which must be among them."""
-    held = {key.split(".")[0] for key in tensors}
-    for name, _ in list(module.named_children()):
-        if name not in held:
-            delattr(module, name)
-    module.load_state_dict(tensors, assign=True)
-
-
 @app.cls(gpu=GPU, cpu=CPU, memory=MEMORY_MIB, max_containers=1, volumes={WEIGHTS: volume}, timeout=TIMEOUT_SECONDS,
          scaledown_window=SCALEDOWN_SECONDS, enable_memory_snapshot=True,
          experimental_options={"enable_gpu_snapshot": True},
@@ -159,7 +121,7 @@ class Hunyuan3D21:
             module.load_state_dict(state, assign=True)
 
         self.pipeline = Hunyuan3DDiTFlowMatchingPipeline(
-            vae=build("vae", _load),
+            vae=build("vae", load_strict),
             model=build("model", strict),
             scheduler=instantiate_from_config(config["scheduler"]),
             conditioner=build("conditioner", strict),
@@ -169,49 +131,21 @@ class Hunyuan3D21:
         )
         del tensors
 
-        self.remover = bgremove.load().to("cuda")
-        for tensor in (*self.remover.parameters(), *self.remover.buffers()):
-            if hasattr(tensor, "host"):
-                del tensor.host
+        self.remover = bgremove.load_on_gpu()
         demo = Path(SOURCE) / "assets" / "demo.png"
         self._generate(demo.read_bytes(), {"steps": 2, "guidance_scale": 5.0, "octree_resolution": 128, "seed": 0},
-                       _silent)
-
-    @modal.enter(snap=False)
-    def start(self):
-        """Names this container: an id, and the Unix time at which it began to take calls."""
-        import uuid
-
-        self.container = {"container": uuid.uuid4().hex, "container_started": time.time()}
+                       silent)
 
     @modal.method()
     def run(self, image, params, progress):
-        from context import InputError
-
-        try:
-            result = self._generate(image, params, reporter(progress))
-        except InputError:
-            raise
-        except Exception:
-            modal.experimental.stop_fetching_inputs()
-            raise
-        return {**result, **self.container}
+        return run_call(self._generate, progress, image, params)
 
     def _generate(self, data, params, report):
-        import io
-
         import bgremove
         import torch
-        from context import InputError
-        from PIL import Image
 
         started = time.monotonic()
-        torch.cuda.reset_peak_memory_stats()
-        try:
-            source = Image.open(io.BytesIO(data))
-            source.load()
-        except OSError:
-            raise InputError("image: the file is not a readable image; send a PNG, JPEG or WEBP")
+        source = read_image(data)
         report(0.0, "removing the background", True)
         rgba = bgremove.remove_background(self.remover, source)
 
@@ -231,5 +165,4 @@ class Hunyuan3D21:
         glb = mesh.export(file_type="glb", include_normals=False)
         torch.cuda.empty_cache()
         return {"raw.glb": glb, "vertices": len(mesh.vertices), "faces": len(mesh.faces),
-                "vram_peak_gb": round(torch.cuda.max_memory_allocated() / 2**30, 2),
                 "seconds": round(time.monotonic() - started, 3)}

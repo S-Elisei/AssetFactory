@@ -2,9 +2,8 @@
 welded vertex normals, plus a UV layout image. Positions and faces are kept."""
 import meshops
 import numpy as np
-from context import InputError
 
-# Atlas resolution in texels; also the size of the layout image and of the overlap measurement.
+# Atlas resolution in texels; also the size of the layout image.
 ATLAS_SIZE = 2048
 
 
@@ -79,12 +78,7 @@ def _uv_layout_image(uv, faces, count, chart):
 
 
 def run(ctx, mesh):
-    try:
-        vertices, faces, _ = meshops.load_glb(mesh)
-    except Exception:
-        raise InputError("mesh: the file is not a readable GLB; send a binary glTF (.glb) with a triangle mesh")
-    if len(faces) == 0:
-        raise InputError("mesh: the GLB contains no triangle mesh; send a binary glTF (.glb) with a triangle mesh")
+    vertices, faces, _ = meshops.load_input_mesh(mesh)
 
     ctx.progress(0.05, "unwrapping")
     vertices, faces = meshops.weld(vertices, faces)
@@ -97,11 +91,4 @@ def run(ctx, mesh):
     meshops.write_glb(mesh_path, vertices, faces, meshops.welded_normals(vertices, faces), uv)
     charts, chart = _uv_charts(faces)
     _uv_layout_image(uv, faces, charts, chart).save(layout_path)
-    return {
-        "mesh": str(mesh_path),
-        "uv_layout": str(layout_path),
-        "charts": int(charts),
-        "vertices": len(vertices),
-        "faces": len(faces),
-        "uv_overlap_texels": meshops.uv_overlap_texels(uv, faces, ATLAS_SIZE),
-    }
+    return {"mesh": str(mesh_path), "uv_layout": str(layout_path)}

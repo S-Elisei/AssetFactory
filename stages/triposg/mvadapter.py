@@ -20,7 +20,7 @@ import mvadapter_common as common
 import numpy as np
 import torch
 from accelerate import init_empty_weights
-from context import MODELS, InputError
+from context import MODELS
 from diffusers import AutoencoderKL, EulerDiscreteScheduler, StableDiffusionXLPipeline, UNet2DConditionModel
 from huggingface_hub import hf_hub_download, snapshot_download
 from mvadapter.models.attention_processor import DecoupledMVRowColSelfAttnProcessor2_0
@@ -34,6 +34,8 @@ from spandrel import ModelLoader
 from transformers import CLIPTextConfig, CLIPTextModel, CLIPTextModelWithProjection, CLIPTokenizer
 
 KEEP_LOADED = False
+# System RAM in GB that the Worker needs to start for this stage. Guessed.
+RAM_GB = 4.5
 SDXL_REPO = "stabilityai/stable-diffusion-xl-base-1.0"
 SDXL_FILES = ["scheduler/*", "tokenizer/*", "tokenizer_2/*", "text_encoder/config.json",
               "text_encoder/model.fp16.safetensors", "text_encoder_2/config.json",
@@ -194,19 +196,7 @@ def _write_cameras(path, cameras, scale):
 
 
 def run(ctx, mesh, image, steps, guidance_scale, texture_resolution, seed):
-    try:
-        vertices, faces, uv = meshops.load_glb(mesh)
-    except Exception:
-        raise InputError("mesh: the file is not a readable GLB; send a binary glTF (.glb) with a triangle mesh")
-    if len(faces) == 0:
-        raise InputError("mesh: the GLB contains no triangle mesh; send a binary glTF (.glb) with a triangle mesh")
-    if uv is None:
-        raise InputError("mesh: the GLB has no UV coordinates (TEXCOORD_0); run mesh_unwrap on it first and send its "
-                         "output")
-    overlap = meshops.uv_overlap_texels(uv, faces, texture_resolution)
-    if overlap:
-        raise InputError(f"mesh: {overlap} texels of the {texture_resolution} x {texture_resolution} texture lie "
-                         "inside more than one UV triangle; run mesh_unwrap on it first and send its output")
+    vertices, faces, uv = meshops.load_input_mesh(mesh, texture_resolution)
     pipeline, upscaler = ctx.model["pipeline"], ctx.model["upscaler"]
 
     ctx.progress(0.0, "rendering normals and positions")
@@ -256,4 +246,4 @@ def run(ctx, mesh, image, steps, guidance_scale, texture_resolution, seed):
 
     ctx.progress(0.97, "writing")
     _write_cameras(ctx.dir / "cameras.json", cameras, scale)
-    return {"views": [str(path) for path in paths], "cameras": str(ctx.dir / "cameras.json"), "seed": seed}
+    return {"views": [str(path) for path in paths], "cameras": str(ctx.dir / "cameras.json")}

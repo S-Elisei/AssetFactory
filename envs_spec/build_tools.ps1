@@ -1,5 +1,7 @@
 # Helpers dot-sourced by the build.ps1 files of the environments that check out upstream code or compile torch
-# extensions.
+# extensions, and by install.ps1. Dot-sourcing sets the cache folder of uv for the script.
+
+$env:UV_CACHE_DIR = Join-Path (Split-Path $PSScriptRoot) ".cache\uv"
 
 function Invoke-Checked {
     # Runs a native command given as a script block and throws when it exits non-zero.

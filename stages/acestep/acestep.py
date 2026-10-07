@@ -31,6 +31,8 @@ from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoTokeni
 
 REPO = "ACE-Step/Ace-Step1.5"
 KEEP_LOADED = False
+# System RAM in GB that the Worker needs to start for this stage. Guessed.
+RAM_GB = 5.0
 # Folder of the checkpoint files, laid out as in the repository.
 CHECKPOINTS = MODELS / "acestep"
 DIT = CHECKPOINTS / "acestep-v15-turbo"
@@ -228,7 +230,7 @@ def run(ctx, caption, lyrics, duration, bpm, keyscale, timesignature, vocal_lang
     ctx.progress(0.97, "writing")
     path = ctx.dir / "music.wav"
     soundfile.write(path, wave, rate, subtype="PCM_16")
-    details = {"audio": str(path), "seed": seed, "duration": len(wave) / rate}
+    details = {"audio": str(path), "duration": len(wave) / rate}
     if audio is None:
         used = sample["params"]
         details.update(bpm=used["bpm"] or used["cot_bpm"], keyscale=used["keyscale"] or used["cot_keyscale"],

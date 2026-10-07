@@ -66,7 +66,6 @@ def run(ctx, mesh):
     ctx.check_cancel()
 
     ctx.progress(0.85, "attaching pieces")
-    gaps = []
     while near:
         body_vertices, body_faces = _from_manifold(body)
         best = None
@@ -78,19 +77,10 @@ def run(ctx, mesh):
         squared_gap, index, direction = best
         gap = float(np.sqrt(squared_gap))
         body = body + near.pop(index)[0].translate(tuple(direction * (gap + OVERLAP * step) / gap))
-        gaps.append(round(gap, 6))
         ctx.check_cancel()
     vertices, faces = _from_manifold(body)
 
     ctx.progress(0.95, "writing")
     path = ctx.dir / "mesh.glb"
     meshops.write_glb(path, vertices, faces, meshops.welded_normals(vertices, faces))
-    return {
-        "mesh": str(path),
-        "removed_thin_pieces": len(pieces) - 1 - len(thick),
-        "removed_far_pieces": len(thick) - len(gaps),
-        "attached_pieces": len(gaps),
-        "attached_gaps": gaps,
-        "vertices": len(vertices),
-        "faces": len(faces),
-    }
+    return {"mesh": str(path), "vertices": len(vertices), "faces": len(faces)}

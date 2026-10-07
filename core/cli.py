@@ -31,8 +31,8 @@ def build_parser():
     return parser
 
 
-def main(argv=None):
-    args = build_parser().parse_args(argv)
+def main():
+    args = build_parser().parse_args()
     try:
         args.run(args)
     except subprocess.CalledProcessError as error:

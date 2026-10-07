@@ -1,8 +1,9 @@
-"""Mesh operations shared by the stages: GLB read and write, vertex welding, welded vertex normals, UV overlap
-measurement and QEM decimation. CPU only.
+"""Mesh operations shared by the stages: GLB read and write, the check of a mesh input, vertex welding, welded vertex
+normals, UV overlap measurement and QEM decimation. CPU only.
 
 Meshes are `vertices` (N, 3) float64 and `faces` (M, 3) int64 arrays."""
 import numpy as np
+from context import InputError
 
 # Candidate texels tested per chunk of uv_overlap_texels.
 CHUNK_TEXELS = 2_000_000
@@ -18,6 +19,28 @@ def load_glb(path):
     return np.asarray(mesh.vertices, np.float64), np.asarray(mesh.faces, np.int64), getattr(mesh.visual, "uv", None)
 
 
+def load_input_mesh(path, uv_size=None):
+    """Returns (vertices, faces, uv) of the GLB `path` as load_glb does. Raises InputError when the file is not a readable
+    GLB or holds no triangle. With `uv_size` it also raises InputError when the mesh has no UVs or when texel centers of
+    a `uv_size` x `uv_size` texture lie inside more than one UV triangle."""
+    try:
+        vertices, faces, uv = load_glb(path)
+    except Exception:
+        raise InputError("mesh: the file is not a readable GLB; send a binary glTF (.glb) with a triangle mesh")
+    if len(faces) == 0:
+        raise InputError("mesh: the GLB contains no triangle mesh; send a binary glTF (.glb) with a triangle mesh")
+    if uv_size is None:
+        return vertices, faces, uv
+    if uv is None:
+        raise InputError("mesh: the GLB has no UV coordinates (TEXCOORD_0); run mesh_unwrap on it first and send its "
+                         "output")
+    overlap = uv_overlap_texels(uv, faces, uv_size)
+    if overlap:
+        raise InputError(f"mesh: {overlap} texels of the {uv_size} x {uv_size} texture lie inside more than one UV "
+                         "triangle; run mesh_unwrap on it first and send its output")
+    return vertices, faces, uv
+
+
 def weld(vertices, faces):
     """Returns (vertices, faces) with the vertices of equal positions merged into one."""
     vertices, inverse = np.unique(np.asarray(vertices, np.float64) + 0.0, axis=0, return_inverse=True)
@@ -29,8 +52,7 @@ def welded_normals(vertices, faces):
     non-manifold edges) get one normal, bit-identical across the copies."""
     import trimesh
 
-    unique, inverse = np.unique(np.asarray(vertices, np.float64) + 0.0, axis=0, return_inverse=True)
-    inverse = inverse.reshape(-1)
+    unique, inverse = weld(vertices, np.arange(len(vertices)))
     return trimesh.Trimesh(unique, inverse[faces], process=False).vertex_normals[inverse]
 
 

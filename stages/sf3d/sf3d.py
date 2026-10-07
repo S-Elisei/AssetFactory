@@ -16,6 +16,8 @@ from sf3d.utils import resize_foreground
 
 REPO = "stabilityai/stable-fast-3d"
 KEEP_LOADED = False
+# System RAM in GB that the Worker needs to start for this stage. Guessed.
+RAM_GB = 4.0
 # Parts of the model stored and kept in bf16; the other parts stay in fp32. Guessed.
 BF16_PARTS = ("image_tokenizer", "backbone", "image_estimator")
 # Modules, parameters and buffers, named by their path in the model, that run() never uses: the illumination estimator

@@ -4,6 +4,8 @@ from PIL import Image
 
 REPO = "tencent/Hunyuan3D-2"
 KEEP_LOADED = False
+# System RAM in GB that the Worker needs to start for this stage. Guessed.
+RAM_GB = 4.0
 DIRECTORY = "hunyuan3d-dit-v2-0-turbo"
 
 

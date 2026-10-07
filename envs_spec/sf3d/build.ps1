@@ -4,7 +4,6 @@
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "..\build_tools.ps1")
 $Root = Split-Path (Split-Path $PSScriptRoot)
-$env:UV_CACHE_DIR = Join-Path $Root ".cache\uv"
 $Venv = Join-Path $Root "envs\sf3d"
 $Py = Join-Path $Venv "Scripts\python.exe"
 $Src = Join-Path $Venv "src\stable-fast-3d"

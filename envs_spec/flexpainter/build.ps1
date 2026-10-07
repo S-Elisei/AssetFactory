@@ -6,7 +6,6 @@
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "..\build_tools.ps1")
 $Root = Split-Path (Split-Path $PSScriptRoot)
-$env:UV_CACHE_DIR = Join-Path $Root ".cache\uv"
 $Venv = Join-Path $Root "envs\flexpainter"
 $Py = Join-Path $Venv "Scripts\python.exe"
 $FlexPainter = Join-Path $Venv "src\FlexPainter"
@@ -19,7 +18,7 @@ Sync-PinnedRepo "https://github.com/sparsehash/sparsehash-c11.git" "0c748d9528c0
 Invoke-Checked { git -C $TorchSparse checkout -q --force HEAD }
 Invoke-Checked { git -C $TorchSparse apply --whitespace=nowarn (Join-Path $PSScriptRoot "torchsparse.patch") }
 
-# torchsparse includes <google/...> headers, which these one-line headers redirect to sparsehash-c11.
+# One-line headers google/dense_hash_map, dense_hash_set, sparse_hash_map and sparse_hash_set redirect to sparsehash-c11.
 $Shim = Join-Path $SparseHash "shim\google"
 New-Item -ItemType Directory -Force $Shim | Out-Null
 foreach ($Name in "dense_hash_map", "dense_hash_set", "sparse_hash_map", "sparse_hash_set") {

@@ -22,7 +22,7 @@ import torch
 import custom_rasterizer  # must follow the import of torch
 import trimesh
 from accelerate import init_empty_weights
-from context import MODELS, InputError
+from context import MODELS
 from diffusers import (AutoencoderKL, DDIMScheduler, EulerAncestralDiscreteScheduler, LCMScheduler,
                        StableDiffusionInstructPix2PixPipeline, UNet2DConditionModel)
 from huggingface_hub import snapshot_download
@@ -36,6 +36,8 @@ from transformers import CLIPTextConfig, CLIPTextModel, CLIPTokenizer
 
 REPO = "tencent/Hunyuan3D-2"
 KEEP_LOADED = False
+# System RAM in GB that the Worker needs to start for this stage. Guessed.
+RAM_GB = 4.5
 DELIGHT = "hunyuan3d-delight-v2-0"
 PAINT = "hunyuan3d-paint-v2-0-turbo"
 # The files `load` reads from the checkpoint snapshot, and the files `download` converts.
@@ -332,19 +334,7 @@ def _base_color(ctx, render, views):
 
 
 def run(ctx, mesh, image, normal_source, texture_resolution, delight):
-    try:
-        vertices, faces, uv = meshops.load_glb(mesh)
-    except Exception:
-        raise InputError("mesh: the file is not a readable GLB; send a binary glTF (.glb) with a triangle mesh")
-    if len(faces) == 0:
-        raise InputError("mesh: the GLB contains no triangle mesh; send a binary glTF (.glb) with a triangle mesh")
-    if uv is None:
-        raise InputError("mesh: the GLB has no UV coordinates (TEXCOORD_0); run mesh_unwrap on it first and send its "
-                         "output")
-    overlap = meshops.uv_overlap_texels(uv, faces, texture_resolution)
-    if overlap:
-        raise InputError(f"mesh: {overlap} texels of the {texture_resolution} x {texture_resolution} texture lie "
-                         "inside more than one UV triangle; run mesh_unwrap on it first and send its output")
+    vertices, faces, uv = meshops.load_input_mesh(mesh, texture_resolution)
     uv = np.asarray(uv, np.float64)
 
     ctx.progress(0.0, "preparing the reference image")

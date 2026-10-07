@@ -20,6 +20,8 @@ from stable_audio_3.models.conditioners import T5GemmaConditioner
 
 REPO = "stabilityai/stable-audio-3-small-sfx"
 KEEP_LOADED = False
+# System RAM in GB that the Worker needs to start for this stage. Guessed.
+RAM_GB = 3.5
 FILES = ["model_config.json", "model.safetensors", "t5gemma-b-b-ul2/config.json", "t5gemma-b-b-ul2/model.safetensors",
          "t5gemma-b-b-ul2/tokenizer.json", "t5gemma-b-b-ul2/tokenizer_config.json",
          "t5gemma-b-b-ul2/special_tokens_map.json"]
@@ -106,4 +108,4 @@ def run(ctx, prompt, steps, seed, duration, audio, noise_level, start_seconds, e
     rate = model.model.sample_rate
     path = ctx.dir / "audio.wav"
     soundfile.write(path, samples, rate, subtype="PCM_16")
-    return {"audio": str(path), "seed": seed, "duration": len(samples) / rate}
+    return {"audio": str(path), "duration": len(samples) / rate}

@@ -9,6 +9,8 @@ from PIL import Image
 
 REPO = "black-forest-labs/FLUX.2-klein-4B"
 KEEP_LOADED = False
+# System RAM in GB that the Worker needs to start for this stage. Guessed.
+RAM_GB = 10.4
 # Text-encoder layers whose hidden states make up the prompt embeddings; the text encoder keeps max + 1 decoder layers.
 TEXT_ENCODER_OUT_LAYERS = (9, 18, 27)
 FILES = ["model_index.json", "scheduler/*", "text_encoder/*", "tokenizer/*", "transformer/*", "vae/*"]
@@ -58,4 +60,4 @@ def run(ctx, prompt, width, height, steps, seed, reference_images):
     ctx.progress(0.97, "saving")
     path = ctx.dir / "image.png"
     result.save(path)
-    return {"image": str(path), "seed": seed, "width": result.width, "height": result.height, "steps": steps}
+    return {"image": str(path), "width": result.width, "height": result.height}

@@ -40,6 +40,8 @@ from spuv.rasterize import NVDiffRasterizerContext
 from transformers import CLIPImageProcessor, CLIPVisionConfig, CLIPVisionModelWithProjection
 
 KEEP_LOADED = False
+# System RAM in GB that the Worker needs to start for this stage. Guessed.
+RAM_GB = 4.0
 REPO = "StarYDY/FlexPainter"
 CHECKPOINT = "outpainter/texgen_v1.ckpt"
 OPEN_CLIP_REPO = "laion/CLIP-ViT-H-14-laion2B-s32B-b79K"

@@ -24,6 +24,8 @@ from triposg.schedulers import RectifiedFlowScheduler
 
 REPO = "VAST-AI/TripoSG"
 KEEP_LOADED = False
+# System RAM in GB that the Worker needs to start for this stage. Guessed.
+RAM_GB = 3.5
 FILES = ["scheduler/*", "feature_extractor_dinov2/*", "image_encoder_dinov2/*", "transformer/*", "vae/*"]
 # Weight file of each component folder of the checkpoint.
 WEIGHTS = {
@@ -158,4 +160,4 @@ def run(ctx, image, steps, guidance_scale, octree_depth, seed):
     ctx.progress(0.95, "writing")
     path = ctx.dir / "raw.glb"
     trimesh.Trimesh(vertices, faces, process=False).export(path)
-    return {"mesh": str(path), "seed": seed, "vertices": len(vertices), "faces": len(faces)}
+    return {"mesh": str(path), "vertices": len(vertices), "faces": len(faces)}

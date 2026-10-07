@@ -3,7 +3,6 @@
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "..\build_tools.ps1")
 $Root = Split-Path (Split-Path $PSScriptRoot)
-$env:UV_CACHE_DIR = Join-Path $Root ".cache\uv"
 $Py = Join-Path $Root "envs\qwentts\Scripts\python.exe"
 $Commit = "022e286b98fbec7e1e916cb940cdf532cd9f488e"
 

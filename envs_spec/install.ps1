@@ -2,8 +2,8 @@
 # envs_spec\<env>\requirements-torch.txt, when that file exists, then envs_spec\<env>\requirements.txt.
 param([Parameter(Mandatory)][string]$Name)
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "build_tools.ps1")
 $Root = Split-Path $PSScriptRoot
-$env:UV_CACHE_DIR = Join-Path $Root ".cache\uv"
 $Venv = Join-Path $Root (Join-Path "envs" $Name)
 $Py = Join-Path $Venv "Scripts\python.exe"
 $Spec = Join-Path $PSScriptRoot $Name

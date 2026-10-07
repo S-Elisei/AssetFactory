@@ -10,9 +10,9 @@ loaded straight onto the GPU. The Triton kernel cache and the FlexGEMM autotunin
 committed after every call. Calls: see the package docstring."""
 import time
 from pathlib import Path
-from queue import Full
 
 import modal
+from cloud import load_strict, read_image, run_call, silent
 
 APP_NAME = "assetfactory-trellis2"
 VOLUME = "assetfactory-trellis2-weights"
@@ -57,34 +57,6 @@ REMESH_BAND = 1
 REMESH_PROJECT = 0
 # Largest hole perimeter that the hole filling closes, in the units of the unit cube. Documented.
 HOLE_PERIMETER = 3e-2
-
-# Seconds between two progress messages that are not forced, and seconds a put of a message may take. Guessed.
-PROGRESS_INTERVAL = 0.5
-PROGRESS_TIMEOUT = 5.0
-
-
-def reporter(queue):
-    """Returns `report(fraction, message, force=False)`, which puts the tuple (fraction, message) on the modal.Queue
-    `queue`; a message that is not forced is dropped when the previous message was put less than PROGRESS_INTERVAL
-    seconds earlier, and a message whose put raises a Modal error or does not finish within PROGRESS_TIMEOUT seconds is
-    dropped."""
-    last = [float("-inf")]
-
-    def report(fraction, message, force=False):
-        now = time.monotonic()
-        if force or now - last[0] >= PROGRESS_INTERVAL:
-            last[0] = now
-            try:
-                queue.put((fraction, message), timeout=PROGRESS_TIMEOUT)
-            except (modal.Error, Full):
-                pass
-
-    return report
-
-
-def _silent(fraction, message, force=False):
-    pass
-
 
 def pinned(url, commit, path):
     return (f"git clone -q {url} {path} && git -C {path} checkout -q {commit} && "
@@ -167,16 +139,6 @@ def download_weights(hf_token):
     volume.commit()
 
 
-def _load(model, tensors):
-    """Deletes every top-level submodule of `model` that holds none of `tensors` (named as the state dict of `model`),
-    then loads `tensors` as the parameters and buffers of `model`, every one of which must be among them."""
-    held = {key.split(".")[0] for key in tensors}
-    for name, _ in list(model.named_children()):
-        if name not in held:
-            delattr(model, name)
-    model.load_state_dict(tensors, assign=True)
-
-
 @app.cls(gpu=GPU, cpu=CPU, memory=MEMORY_MIB, max_containers=1, volumes={WEIGHTS: volume}, timeout=TIMEOUT_SECONDS,
          scaledown_window=SCALEDOWN_SECONDS, enable_memory_snapshot=True,
          experimental_options={"enable_gpu_snapshot": True},
@@ -206,7 +168,7 @@ class Trellis2:
             config = json.loads(Path(config_file).read_text(encoding="utf-8"))
             with init_empty_weights():
                 model = getattr(models, config["name"])(**config["args"])
-            _load(model, load_file(weights_file, device="cuda"))
+            load_strict(model, load_file(weights_file, device="cuda"))
             loaded[name] = model.to("cuda")
 
         extractor_class = image_feature_extractor.DinoV3FeatureExtractor
@@ -230,54 +192,25 @@ class Trellis2:
         )
         self.pipeline.cuda()
 
-        self.remover = bgremove.load().to("cuda")
-        for tensor in (*self.remover.parameters(), *self.remover.buffers()):
-            if hasattr(tensor, "host"):
-                del tensor.host
+        self.remover = bgremove.load_on_gpu()
         example = Path(SOURCE) / "assets" / "example_image" / "T.png"
         self._generate(example.read_bytes(), {"resolution": 1024, "steps": 2, "decimation_target": 100000, "seed": 0},
-                       _silent)
-
-    @modal.enter(snap=False)
-    def start(self):
-        """Names this container: an id, and the Unix time at which it began to take calls."""
-        import uuid
-
-        self.container = {"container": uuid.uuid4().hex, "container_started": time.time()}
+                       silent)
 
     @modal.method()
     def run(self, image, params, progress):
-        from context import InputError
-
-        try:
-            result = self._generate(image, params, reporter(progress))
-        except InputError:
-            raise
-        except Exception:
-            modal.experimental.stop_fetching_inputs()
-            raise
-        volume.commit()
-        return {**result, **self.container}
+        return run_call(self._generate, progress, image, params, last=volume.commit)
 
     def _generate(self, data, params, report):
-        import io
-
         import bgremove
         import cumesh
         import numpy as np
         import torch
         import trimesh
-        from context import InputError
-        from PIL import Image
         from trellis2.pipelines.samplers import flow_euler
 
         started = time.monotonic()
-        torch.cuda.reset_peak_memory_stats()
-        try:
-            source = Image.open(io.BytesIO(data))
-            source.load()
-        except OSError:
-            raise InputError("image: the file is not a readable image; send a PNG, JPEG or WEBP")
+        source = read_image(data)
         report(0.0, "removing the background", True)
         rgba = bgremove.remove_background(self.remover, source)
 
@@ -330,5 +263,4 @@ class Trellis2:
                               faces=faces, process=False).export(file_type="glb", include_normals=False)
         torch.cuda.empty_cache()
         return {"raw.glb": glb, "resolution": int(resolution), "vertices": len(vertices), "faces": len(faces),
-                "vram_peak_gb": round(torch.cuda.max_memory_allocated() / 2**30, 2),
                 "seconds": round(time.monotonic() - started, 3)}

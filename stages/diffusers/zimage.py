@@ -15,6 +15,8 @@ from safetensors import safe_open
 
 REPO = "Tongyi-MAI/Z-Image-Turbo"
 KEEP_LOADED = False
+# System RAM in GB that the Worker needs to start for this stage. Guessed.
+RAM_GB = 14.2
 FILES = ["model_index.json", "scheduler/*", "text_encoder/*", "tokenizer/*", "transformer/*", "vae/*"]
 # Folder that download() writes and load() reads: the transformer shards of the checkpoint converted to bf16.
 BF16_TRANSFORMER = MODELS / "z-image-turbo" / "transformer-bf16"
@@ -89,4 +91,4 @@ def run(ctx, prompt, steps, seed, width, height, image, strength):
     ctx.progress(0.97, "saving")
     path = ctx.dir / "image.png"
     result.save(path)
-    return {"image": str(path), "seed": seed, "width": result.width, "height": result.height, "steps": steps}
+    return {"image": str(path), "width": result.width, "height": result.height}

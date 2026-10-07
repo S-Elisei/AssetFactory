@@ -17,6 +17,8 @@ from safetensors import safe_open
 REPO = "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
 REVISION = "5ecdb67327fd37bb2e042aab12ff7391903235d3"
 KEEP_LOADED = False
+# System RAM in GB that the Worker needs to start for this stage. Guessed.
+RAM_GB = 3.5
 FILES = ["config.json", "model.safetensors", "preprocessor_config.json", "tokenizer_config.json", "vocab.json",
          "merges.txt", "speech_tokenizer/config.json", "speech_tokenizer/model.safetensors"]
 # File that download() writes and load() reads: the decoder tensors of speech_tokenizer/model.safetensors in bf16.
@@ -92,5 +94,4 @@ def run(ctx, text, voice_description, language, do_sample, temperature, top_k, t
     ctx.progress(0.95, "writing")
     path = ctx.dir / "speech.wav"
     soundfile.write(path, waves[0], rate, subtype="PCM_16")
-    return {"audio": str(path), "seed": seed, "duration": len(waves[0]) / rate,
-            "reached_max_new_tokens": len(waves[0]) / rate * FRAME_RATE >= max_new_tokens}
+    return {"audio": str(path), "duration": len(waves[0]) / rate}

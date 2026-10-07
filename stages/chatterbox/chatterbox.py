@@ -26,6 +26,8 @@ from safetensors import safe_open
 
 REPO = "ResembleAI/chatterbox"
 KEEP_LOADED = False
+# System RAM in GB that the Worker needs to start for this stage. Guessed.
+RAM_GB = 3.5
 T3_FILE = "t3_mtl23ls_v3.safetensors"
 FILES = ["ve.pt", T3_FILE, "s3gen.pt", "grapheme_mtl_merged_expanded_v1.json", "conds.pt"]
 # Segmenter model of spacy_pkuseg that the tokenizer loads. Documented: the default of `pkuseg()`.
@@ -99,4 +101,4 @@ def run(ctx, text, language, exaggeration, cfg_weight, temperature, repetition_p
     ctx.progress(0.95, "writing")
     path = ctx.dir / "speech.wav"
     soundfile.write(path, wave, model.sr, subtype="PCM_16")
-    return {"audio": str(path), "seed": seed, "duration": len(wave) / model.sr}
+    return {"audio": str(path), "duration": len(wave) / model.sr}

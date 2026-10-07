@@ -1,13 +1,13 @@
 """Modal app of the UniTEX views cloud stage: six orthographic views of a UV-mapped mesh from one reference image with
 UniTEX's multiview texturing (FLUX.1-dev with the UniTEX texture LoRA, optionally followed by the delight LoRA pass),
-upscaled with TSD-SR, and the cameras of the views in the frame of the input mesh. UniTEX's LTM and its reprojection
-are not run. In one container: background removal of the reference with the `bgremove` stage code (BiRefNet), then
-the views. The input mesh is checked first, before any model runs, with the mesh code of `shared/meshops.py`.
+upscaled with TSD-SR, and the cameras of the views in the frame of the input mesh. In one container: background removal
+of the reference with the `bgremove` stage code (BiRefNet), then the views. The input mesh is checked first, before any
+model runs, with `meshops.load_input_mesh` of `shared/meshops.py`.
 
 The views are rendered and generated for the mesh moved to v' = (v - c) / s, with c the center of the bounding box of
 the vertices that the faces use and s its largest extent divided by 2 * GEOMETRY_SCALE. The returned camera of view `n`
-has the rotation of the camera of the moved mesh and the translation s * t' + c, which makes it rigid in the units of
-the input mesh; its half side is s divided by CAMERA_SCALE.
+has the rotation of the camera of the moved mesh and the translation s * t' + c; its half side is s divided by
+CAMERA_SCALE.
 
 The weights are in the Modal Volume `VOLUME`, mounted at WEIGHTS: the Hugging Face cache of the repositories, the
 bf16 copy of the FLUX VAE in CONVERTED and the TSD-SR files in TSDSR. The models are built without weights and their
@@ -15,9 +15,9 @@ tensors are loaded straight onto the GPU, except the two SD3 models that TSD-SR 
 docstring."""
 import time
 from pathlib import Path
-from queue import Full
 
 import modal
+from cloud import read_image, run_call
 
 APP_NAME = "assetfactory-unitex"
 VOLUME = "unitex-weights"
@@ -68,30 +68,6 @@ REFERENCE_SIZE = 1024
 REFERENCE_FILL = 0.95
 CONDITION_SIZE = 512
 BACKGROUND = "grey"
-# Seconds between two progress messages that are not forced, and seconds a put of a message may take. Guessed.
-PROGRESS_INTERVAL = 0.5
-PROGRESS_TIMEOUT = 5.0
-
-
-def reporter(queue):
-    """Returns `report(fraction, message, force=False)`, which puts the tuple (fraction, message) on the modal.Queue
-    `queue`; a message that is not forced is dropped when the previous message was put less than PROGRESS_INTERVAL
-    seconds earlier, and a message whose put raises a Modal error or does not finish within PROGRESS_TIMEOUT seconds is
-    dropped."""
-    last = [float("-inf")]
-
-    def report(fraction, message, force=False):
-        now = time.monotonic()
-        if force or now - last[0] >= PROGRESS_INTERVAL:
-            last[0] = now
-            try:
-                queue.put((fraction, message), timeout=PROGRESS_TIMEOUT)
-            except (modal.Error, Full):
-                pass
-
-    return report
-
-
 image = (
     modal.Image.from_registry("nvidia/cuda:11.8.0-devel-ubuntu22.04", add_python="3.10")
     .apt_install("git", "build-essential", "ninja-build", "libgl1", "libglib2.0-0", "libsm6", "libxext6",
@@ -258,30 +234,11 @@ class UniTEX:
                     str(TSDSR / "checkpoint" / "tsdsr"), "--embedding_dir", str(TSDSR / "dataset" / "default")]
         self.upscaler = TSDSRPipeline()
 
-        self.remover = bgremove.load().to("cuda")
-        for tensor in (*self.remover.parameters(), *self.remover.buffers()):
-            if hasattr(tensor, "host"):
-                del tensor.host
-
-    @modal.enter(snap=False)
-    def start(self):
-        """Names this container: an id, and the Unix time at which it began to take calls."""
-        import uuid
-
-        self.container = {"container": uuid.uuid4().hex, "container_started": time.time()}
+        self.remover = bgremove.load_on_gpu()
 
     @modal.method()
     def run(self, mesh, image, params, progress):
-        from context import InputError
-
-        try:
-            result = self._generate(mesh, image, params, reporter(progress))
-        except InputError:
-            raise
-        except Exception:
-            modal.experimental.stop_fetching_inputs()
-            raise
-        return {**result, **self.container}
+        return run_call(self._generate, progress, mesh, image, params)
 
     def _generate(self, data, reference, params, report):
         import io
@@ -292,36 +249,16 @@ class UniTEX:
         import meshops
         import torch
         import trimesh
-        from context import InputError
         from PIL import Image
         from TextureTools.texturetools.video.export_nvdiffrast_video import VideoExporter
 
         started = time.monotonic()
-        torch.cuda.reset_peak_memory_stats()
         report(0.0, "checking the mesh", True)
         with tempfile.TemporaryDirectory() as folder:
             input_path = Path(folder) / "input.glb"
             input_path.write_bytes(data)
-            try:
-                vertices, faces, uv = meshops.load_glb(str(input_path))
-            except Exception:
-                raise InputError("mesh: the file is not a readable GLB; send a binary glTF (.glb) with a triangle mesh")
-            if len(faces) == 0:
-                raise InputError("mesh: the GLB contains no triangle mesh; send a binary glTF (.glb) with a triangle "
-                                 "mesh")
-            if uv is None:
-                raise InputError("mesh: the GLB has no UV coordinates (TEXCOORD_0); run mesh_unwrap on it first and "
-                                 "send its output")
-            overlap = meshops.uv_overlap_texels(uv, faces, params["texture_size"])
-            if overlap:
-                raise InputError(f"mesh: {overlap} texels of the {params['texture_size']} x {params['texture_size']} "
-                                 "texture lie inside more than one UV triangle; run mesh_unwrap on it first and send "
-                                 "its output")
-            try:
-                source = Image.open(io.BytesIO(reference))
-                source.load()
-            except OSError:
-                raise InputError("image: the file is not a readable image; send a PNG, JPEG or WEBP")
+            vertices, faces, _ = meshops.load_input_mesh(str(input_path), params["texture_size"])
+            source = read_image(reference)
 
             report(0.05, "removing the background", True)
             condition = _reference(bgremove.remove_background(self.remover, source))
@@ -386,5 +323,4 @@ class UniTEX:
                 view.save(buffer, "PNG")
                 files[f"{name}_view_{number}.png"] = buffer.getvalue()
         torch.cuda.empty_cache()
-        return {**files, "vram_peak_gb": round(torch.cuda.max_memory_allocated() / 2**30, 2),
-                "seconds": round(time.monotonic() - started, 3)}
+        return {**files, "seconds": round(time.monotonic() - started, 3)}
