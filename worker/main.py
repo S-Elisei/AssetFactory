@@ -1,6 +1,12 @@
 """Worker process of one environment. Serve mode: `main.py <env>`, JSON lines on stdin and on the original stdout.
 Download mode: `main.py <env> download <stage>`. Every `run` has an `id` unique within the Worker process; a `cancel`
-names that id. Standard library only."""
+names that id. Standard library only.
+
+A stage is the module `<root>/stages/<env>/<stage>.py`. It declares `KEEP_LOADED` (True or False) and the function
+`run(ctx, **args)`; with a model it also has `load()` (returns the model, which `run` finds as `ctx.model`) and
+`download()`. The model of a stage with KEEP_LOADED True stays loaded for the life of the process. The model of a stage
+with KEEP_LOADED False is the only one of its kind: running another stage with KEEP_LOADED False drops it first; running
+a stage with KEEP_LOADED True does not."""
 import gc
 import importlib.util
 import json
@@ -66,32 +72,41 @@ def error_kind(error):
     return "failed"
 
 
-def run_stage(env, message, send, cancelled, loaded):
-    """Runs one `run` message and sends its `done` or `error` message."""
+def run_stage(env, message, send, cancelled, kept, loaded):
+    """Runs one `run` message and sends its `done` or `error` message. `kept` holds the models of the stages with
+    KEEP_LOADED True by stage name; `loaded` holds the stage and the model of the last stage with KEEP_LOADED False."""
     started = time.monotonic()
     run_id, stage = message["id"], message["stage"]
     ctx = Context(run_id, Path(message["dir"]), send, cancelled)
+    failed = False
     try:
-        if loaded["stage"] != stage:
-            drop_model(loaded)
         module = stage_module(env, stage)
-        if loaded["stage"] is None:
-            if hasattr(module, "load"):
+        if module.KEEP_LOADED:
+            if stage not in kept:
                 ctx.progress(0.0, f"loading {stage}")
-                loaded["model"] = module.load()
-            loaded["stage"] = stage
-        ctx.model = loaded["model"]
+                kept[stage] = module.load()
+            ctx.model = kept[stage]
+        else:
+            if loaded["stage"] != stage:
+                drop_model(loaded)
+                if hasattr(module, "load"):
+                    ctx.progress(0.0, f"loading {stage}")
+                    loaded["model"] = module.load()
+                loaded["stage"] = stage
+            ctx.model = loaded["model"]
         result = module.run(ctx, **message["args"])
         send({"type": "done", "id": run_id, "result": result, "seconds": time.monotonic() - started})
     except Exception as error:
+        failed = True
         kind = error_kind(error)
         if kind in ("oom", "failed"):
             traceback.print_exc()
         text = f"{type(error).__name__}: {error}" if kind == "failed" else str(error)
         send({"type": "error", "id": run_id, "kind": kind, "message": text})
-        release_memory()
     finally:
         cancelled.discard(run_id)
+    if failed:
+        release_memory()
 
 
 def read_requests(requests, cancelled):
@@ -115,10 +130,10 @@ def serve(env):
         protocol.write(json.dumps(message) + "\n")
         protocol.flush()
 
-    requests, cancelled, loaded = queue.Queue(), set(), {"stage": None, "model": None}
+    requests, cancelled, kept, loaded = queue.Queue(), set(), {}, {"stage": None, "model": None}
     threading.Thread(target=read_requests, args=(requests, cancelled), daemon=True).start()
     while (message := requests.get()) is not None:
-        run_stage(env, message, send, cancelled, loaded)
+        run_stage(env, message, send, cancelled, kept, loaded)
 
 
 def download(env, stage):

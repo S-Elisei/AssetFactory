@@ -1,11 +1,9 @@
 """Code shared by the stages of the `diffusers` environment: fitting a text encoder, a transformer and a VAE onto the
 GPU, the prompt embeddings kept between runs, and the sampling-step callback. Imports torch, accelerate and
 transformers."""
-import json
-import mmap
-import struct
 from pathlib import Path
 
+import mapped
 import torch
 from accelerate import init_empty_weights
 from transformers import AutoConfig, Qwen3Model
@@ -19,32 +17,12 @@ SLAB_BYTES = 2**30
 RESIDENT_BUDGETS = ((300_000, 4 * 2**30), (650_000, 3 * 2**30))
 
 
-def _mapped_tensors(directory):
-    """Returns {key: bf16 tensor} backed by read-only memory maps of the *.safetensors files in `directory`. The files
-    must store bf16 tensors."""
-    tensors = {}
-    for path in Path(directory).glob("*.safetensors"):
-        with open(path, "rb") as file:
-            mapped = mmap.mmap(file.fileno(), 0, access=mmap.ACCESS_READ)
-        header_size = struct.unpack("<Q", mapped[:8])[0]
-        header = json.loads(mapped[8:8 + header_size])
-        header.pop("__metadata__", None)
-        for key, info in header.items():
-            start, end = info["data_offsets"]
-            tensor = torch.frombuffer(mapped, dtype=torch.bfloat16, count=(end - start) // 2,
-                                      offset=8 + header_size + start)
-            tensors[key] = tensor.view(info["shape"])
-    return tensors
-
-
 def _weights_to_device(module, _args):
-    for parameter in module.parameters(recurse=False):
-        parameter.data = parameter.host.to(DEVICE)
+    mapped.to_device(module, DEVICE, recurse=False)
 
 
 def _weights_to_host(module, _args, _output):
-    for parameter in module.parameters(recurse=False):
-        parameter.data = parameter.host
+    mapped.to_host(module, recurse=False)
 
 
 def load_text_encoder(snapshot, layers=None):
@@ -58,15 +36,12 @@ def load_text_encoder(snapshot, layers=None):
         config.num_hidden_layers = layers
     with init_empty_weights():
         text_encoder = Qwen3Model(config)
-    mapped = _mapped_tensors(directory)
-    text_encoder.load_state_dict({key: mapped["model." + key] for key in text_encoder.state_dict()}, assign=True)
+    tensors = mapped.map_tensors(directory.glob("*.safetensors"))
+    mapped.attach(text_encoder, {key: tensors["model." + key] for key in text_encoder.state_dict()})
     for buffer in text_encoder.buffers():
         buffer.data = buffer.data.to(DEVICE)
     for module in text_encoder.modules():
-        parameters = list(module.parameters(recurse=False))
-        for parameter in parameters:
-            parameter.host = parameter.data
-        if parameters:
+        if list(module.parameters(recurse=False)):
             module.register_forward_pre_hook(_weights_to_device)
             module.register_forward_hook(_weights_to_host)
     return text_encoder

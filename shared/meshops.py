@@ -1,5 +1,5 @@
-"""Mesh operations shared by the stages: GLB read and write, vertex welding, welded vertex normals and UV overlap
-measurement. CPU only.
+"""Mesh operations shared by the stages: GLB read and write, vertex welding, welded vertex normals, UV overlap
+measurement and QEM decimation. CPU only.
 
 Meshes are `vertices` (N, 3) float64 and `faces` (M, 3) int64 arrays."""
 import numpy as np
@@ -32,6 +32,29 @@ def welded_normals(vertices, faces):
     unique, inverse = np.unique(np.asarray(vertices, np.float64) + 0.0, axis=0, return_inverse=True)
     inverse = inverse.reshape(-1)
     return trimesh.Trimesh(unique, inverse[faces], process=False).vertex_normals[inverse]
+
+
+def decimate_mesh(mesh, target_faces):
+    """Decimates the MeshLib mesh in place with QEM down to target_faces and packs it."""
+    import meshlib.mrmeshpy as mr
+
+    settings = mr.DecimateSettings()
+    settings.maxError = 1e9
+    settings.maxDeletedFaces = max(0, mesh.topology.numValidFaces() - target_faces)
+    settings.packMesh = True
+    mr.decimateMesh(mesh, settings)
+
+
+def decimate(vertices, faces, target_faces):
+    """Returns (vertices, faces) decimated with QEM (MeshLib, topology kept) down to target_faces; a mesh with no more
+    faces is returned as is."""
+    import meshlib.mrmeshnumpy as mrn
+
+    if len(faces) <= target_faces:
+        return vertices, faces
+    mesh = mrn.meshFromFacesVerts(np.asarray(faces, np.int32), np.asarray(vertices, np.float32))
+    decimate_mesh(mesh, target_faces)
+    return np.asarray(mrn.getNumpyVerts(mesh), np.float64), np.asarray(mrn.getNumpyFaces(mesh.topology), np.int64)
 
 
 def uv_overlap_texels(uv, faces, size):

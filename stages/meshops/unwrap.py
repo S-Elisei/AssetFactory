@@ -4,6 +4,7 @@ import meshops
 import numpy as np
 from context import InputError
 
+KEEP_LOADED = False
 # Atlas resolution in texels; also the size of the layout image and of the overlap measurement.
 ATLAS_SIZE = 2048
 

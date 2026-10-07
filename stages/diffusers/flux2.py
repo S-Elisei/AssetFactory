@@ -8,6 +8,7 @@ from huggingface_hub import snapshot_download
 from PIL import Image
 
 REPO = "black-forest-labs/FLUX.2-klein-4B"
+KEEP_LOADED = False
 # Text-encoder layers whose hidden states make up the prompt embeddings; the text encoder keeps max + 1 decoder layers.
 TEXT_ENCODER_OUT_LAYERS = (9, 18, 27)
 FILES = ["model_index.json", "scheduler/*", "text_encoder/*", "tokenizer/*", "transformer/*", "vae/*"]

@@ -1,0 +1,33 @@
+diff --git a/sf3d/models/image_estimator/clip_based_estimator.py b/sf3d/models/image_estimator/clip_based_estimator.py
+--- a/sf3d/models/image_estimator/clip_based_estimator.py
++++ b/sf3d/models/image_estimator/clip_based_estimator.py
+@@ -42,7 +42,7 @@
+ 
+     def configure(self):
+         self.model, _, self.preprocess = open_clip.create_model_and_transforms(
+-            self.cfg.model, pretrained=self.cfg.pretrain
++            self.cfg.model, pretrained=None, device="meta"
+         )
+         self.model.eval()
+ 
+diff --git a/sf3d/models/tokenizers/image.py b/sf3d/models/tokenizers/image.py
+--- a/sf3d/models/tokenizers/image.py
++++ b/sf3d/models/tokenizers/image.py
+@@ -7,7 +7,7 @@
+ from jaxtyping import Float
+ from torch import Tensor
+ 
+-from sf3d.models.tokenizers.dinov2 import Dinov2Model
++from sf3d.models.tokenizers.dinov2 import Dinov2Config, Dinov2Model
+ from sf3d.models.transformers.attention import Modulation
+ from sf3d.models.utils import BaseModule
+ 
+@@ -23,7 +23,7 @@
+     cfg: Config
+ 
+     def configure(self) -> None:
+-        self.model = Dinov2Model.from_pretrained(self.cfg.pretrained_model_name_or_path)
++        self.model = Dinov2Model(Dinov2Config.from_pretrained(self.cfg.pretrained_model_name_or_path))
+ 
+         for p in self.model.parameters():
+             p.requires_grad_(False)

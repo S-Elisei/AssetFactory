@@ -1,0 +1,33 @@
+diff --git a/triposg/inference_utils.py b/triposg/inference_utils.py
+--- a/triposg/inference_utils.py
++++ b/triposg/inference_utils.py
+@@ -461,19 +461,14 @@
+     torch.cuda.empty_cache()
+     mesh_v_f = []
+     grid_logits = grid_logits[0]
+-    try:
+-        print("final grids shape = ", grid_logits.shape)
+-        dmc = DiffDMC(dtype=torch.float32).to(grid_logits.device)
+-        sdf = -grid_logits / octree_resolution
+-        sdf = sdf.to(torch.float32).contiguous()
+-        vertices, faces = dmc(sdf, deform=None, return_quads=False, normalize=False)
+-        vertices = vertices.detach().cpu().numpy()
+-        faces = faces.detach().cpu().numpy()[:, ::-1]        
+-        vertices = vertices / (2 ** octree_depth) * bbox_size + bbox_min
+-        mesh_v_f = (vertices.astype(np.float32), np.ascontiguousarray(faces))
+-    except Exception as e:
+-        print(e)
+-        torch.cuda.empty_cache()
+-        mesh_v_f = (None, None)
++    print("final grids shape = ", grid_logits.shape)
++    dmc = DiffDMC(dtype=torch.float32).to(grid_logits.device)
++    sdf = -grid_logits / octree_resolution
++    sdf = sdf.to(torch.float32).contiguous()
++    vertices, faces = dmc(sdf, deform=None, return_quads=False, normalize=False)
++    vertices = vertices.detach().cpu().numpy()
++    faces = faces.detach().cpu().numpy()[:, ::-1]
++    vertices = vertices / (2 ** octree_depth) * bbox_size + bbox_min
++    mesh_v_f = (vertices.astype(np.float32), np.ascontiguousarray(faces))
+ 
+     return [mesh_v_f]
+\ No newline at end of file

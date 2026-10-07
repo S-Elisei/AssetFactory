@@ -14,6 +14,7 @@ from safetensors import safe_open
 from safetensors.torch import save_file
 
 REPO = "Tongyi-MAI/Z-Image-Turbo"
+KEEP_LOADED = False
 FILES = ["model_index.json", "scheduler/*", "text_encoder/*", "tokenizer/*", "transformer/*", "vae/*"]
 # Folder that download() writes and load() reads: the transformer shards of the checkpoint converted to bf16.
 BF16_TRANSFORMER = MODELS / "z-image-turbo" / "transformer-bf16"

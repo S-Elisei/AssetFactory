@@ -3,3 +3,6 @@ scipy==1.18.1
 trimesh==5.1.1
 xatlas==0.0.11
 pillow==12.3.0
+libigl==2.6.3
+meshlib==3.1.4.297
+manifold3d==3.5.4
