@@ -132,9 +132,8 @@ def _uploads():
     return "; ".join(f"{kind}: {', '.join(extensions)}" for kind, extensions in kinds.items())
 
 
-def _job_section(name, job_class):
-    """The markdown section of a job: description, params schema, inputs, outputs."""
-    info = describe(job_class)
+def _job_section(name, info):
+    """The markdown section of a job from its `describe()` data: description, params schema, inputs, outputs."""
     inputs = [f"- `{key}`: {spec['kind']}, {_count(spec['min'], spec['max'])} file(s). {spec['description']}"
               for key, spec in info["inputs"].items()]
     outputs = [f"- `{file}`: {text}" for file, text in info["outputs"].items()]
@@ -149,6 +148,7 @@ class Api:
         self._store, self._runner = store, runner
         self._local, self._cloud = local_queue, cloud_queue
         self._jobs = {name: load_job(name) for name in job_names()}
+        self._schema = {name: describe(job_class) for name, job_class in self._jobs.items()}
         pynvml.nvmlInit()
         self._gpu = pynvml.nvmlDeviceGetHandleByIndex(0)
         guide = Path(__file__).with_name("usage.md").read_text(encoding="utf-8")
@@ -156,7 +156,7 @@ class Api:
                   "PAGE_SIZE": PAGE_SIZE}
         for key, value in limits.items():
             guide = guide.replace("{{" + key + "}}", str(value))
-        self._guide = guide + "\n".join(_job_section(name, job_class) for name, job_class in self._jobs.items())
+        self._guide = guide + "\n".join(_job_section(name, info) for name, info in self._schema.items())
 
         app = self.app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
         app.add_exception_handler(Refusal, _refusal)
@@ -165,6 +165,7 @@ class Api:
         for method, path, handler, status in (
                 ("GET", "/api/usage", self.usage, 200),
                 ("GET", "/api/health", self.health, 200),
+                ("GET", "/api/jobs/schema", self.jobs_schema, 200),
                 ("POST", "/api/files", self.upload_file, 201),
                 ("GET", "/api/files", self.list_files, 200),
                 ("GET", "/api/files/{file_id}", self.get_file, 200),
@@ -191,6 +192,9 @@ class Api:
 
     async def health(self):
         return {"status": "ok"}
+
+    async def jobs_schema(self):
+        return self._schema
 
     # Files.
 
@@ -258,6 +262,7 @@ class Api:
             self._store.delete_job(job_id)
         except Refused as error:
             raise Refusal(409, str(error))
+        self._runner.publish(job_id)
         return {"deleted": job_id}
 
     # Batches.
@@ -305,7 +310,9 @@ class Api:
                         yield ": keepalive\n\n"
                         continue
                     job = self._store.job(job_id)
-                    if job is not None:
+                    if job is None:
+                        yield f"event: deleted\ndata: {json.dumps(job_id)}\n\n"
+                    else:
                         yield f"data: {json.dumps(self._view(job))}\n\n"
             finally:
                 self._runner.unsubscribe(queue)

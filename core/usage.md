@@ -12,6 +12,7 @@ The commands below are written for `curl.exe`. A JSON request body is sent from 
 
 A job is a named recipe: `zimage_text_to_image`, `hy2_textured`, `music_text` and so on. The catalog at the end of this
 guide lists every job with its description, its params as a JSON schema, its inputs and its outputs.
+- `GET {{BASE}}/api/jobs/schema` answers the catalog as JSON: `{job name: {description, params, inputs, outputs}}`.
 - Every param of a job is required; params have no default values. A param that is not in the schema is refused.
 - `seed` is a param of the jobs whose stages are seeded: an integer from 0 to {{SEED_MAX}}, or `"random"`. The factory
   replaces `"random"` with a random integer when it creates the job; the job object holds that integer.
@@ -142,7 +143,8 @@ the state and the next action; `details` lists every defect, each starting with 
 - `POST {{BASE}}/api/system/unload` stops the alive Worker and answers the local queue. It is refused with 409 while a
   stage is starting or running.
 - `GET {{BASE}}/api/events` is a server-sent event stream. Each `data:` line is a job object, sent when the job is
-  submitted, starts, reports progress or ends.
+  submitted, starts, reports progress or ends. When a job is deleted, the stream sends the event `deleted` whose
+  `data:` line is the JSON string of its `job_id`.
 
 ## Job catalog
 

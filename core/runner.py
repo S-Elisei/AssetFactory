@@ -41,7 +41,7 @@ class Runner:
     def submit(self, job_id):
         """Starts the job `job_id`, which is queued in the Store."""
         self._tasks[job_id] = asyncio.create_task(self._run(job_id))
-        self._publish(job_id)
+        self.publish(job_id)
 
     def cancel(self, job_id):
         """Cancels the running job `job_id`; it ends as cancelled."""
@@ -54,8 +54,9 @@ class Runner:
 
     def subscribe(self):
         """Returns an asyncio.Queue that receives the job_id of every job that changes: when it is submitted, starts,
-        reports progress and ends. The subscriber reads the job from the Store and its progress from `progress()`.
-        The caller calls `unsubscribe` when it stops reading."""
+        reports progress and ends, and of every job that is deleted. The subscriber reads the job from the Store, where a
+        deleted job has no row, and its progress from `progress()`. The caller calls `unsubscribe` when it stops
+        reading."""
         queue = asyncio.Queue()
         self._subscribers.add(queue)
         return queue
@@ -72,7 +73,8 @@ class Runner:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
 
-    def _publish(self, job_id):
+    def publish(self, job_id):
+        """Sends the job_id to every subscriber."""
         for queue in self._subscribers:
             queue.put_nowait(job_id)
 
@@ -80,7 +82,7 @@ class Runner:
         """Ends the job in the Store and notifies, with no await between."""
         self._store.finish_job(job_id, status, kind, message)
         self._notifier.job_ended(job_id)
-        self._publish(job_id)
+        self.publish(job_id)
 
     async def _run(self, job_id):
         job = self._store.job(job_id)
@@ -114,7 +116,7 @@ class Runner:
                 self._store.start_job(job["job_id"])
             progress.items[item] = fraction
             progress.message = message if job["count"] == 1 else f"item {item}: {message}"
-            self._publish(job["job_id"])
+            self.publish(job["job_id"])
 
         async def run_item(item):
             context = Context(self._store, self._local, self._cloud, job, params, inputs, item, stage_count, report)
