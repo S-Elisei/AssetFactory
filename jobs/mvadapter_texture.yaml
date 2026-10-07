@@ -1,0 +1,13 @@
+description: Textures one mesh with non-overlapping UVs from one reference image. The background of the image is removed, MV-Adapter generates six views of the mesh, the views are projected into the UV layout and the texels no view sees are completed. The geometry and the UVs of the mesh are kept.
+params:
+  steps: Number of denoising steps of the multiview generation.
+  guidance_scale: Classifier-free guidance scale of the multiview generation.
+  texture_resolution: Side in pixels of the base-color texture.
+  seed: Seed of the random draws; "random" picks a seed. Item i of a job with count above 1 uses the seed plus i.
+inputs:
+  mesh: One GLB, Y up with the front of the object facing +Z. All triangle meshes of the scene are merged into one mesh. The mesh needs UVs in which no texel of the texture_resolution texture lies inside more than one UV triangle; mesh_unwrap makes such UVs.
+  image: One reference image of the same object in the same pose, seen from the front, the whole object visible. An image whose background is already transparent is used as is, its alpha being the object mask; any other image has its background removed.
+outputs:
+  mesh.glb: The input mesh with its own UVs, welded vertex normals, the base-color texture, metallic factor 0 and roughness factor 1.
+  atlas_0.png: The base-color texture.
+  image_0.png: The reference image after background removal.

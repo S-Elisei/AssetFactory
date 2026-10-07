@@ -1,7 +1,7 @@
 """Stage fill: completes the texels that the projections of `bake` left empty with FlexPainter's outpainter (TEXGen
 finetuned for UV texture completion at SIZE x SIZE) and writes one completed atlas PNG per projection.
 
-`run(ctx, mesh, covered, valid, sets)`: `mesh` is the GLB with the UVs of the projections, `covered` and `valid` the
+`run(ctx, mesh, covered, valid, sets, seed)`: `mesh` is the GLB with the UVs of the projections, `covered` and `valid` the
 files of the same names that `bake` returns, `sets` a list of {"atlas": path, "views": [paths]}: one entry of the
 `atlases` of `bake` and the view images of that set, RGBA files whose alpha is the silhouette of the mesh (the color is
 read on black where the alpha is 0). The atlas size is a multiple of SIZE. Returns {"atlases": [path, ...]}: the
@@ -12,7 +12,7 @@ covers are valid; its color is the mean of those); the CLIP embeddings of the vi
 outpainter samples the SIZE atlas conditioned on the known texels, the embeddings and the mesh positions; every covered
 texel that the projection left empty takes the outpainter's color, bilinearly enlarged to the atlas size; the atlas
 grows GROW texels past the UV layout by repeated averaging of filled neighbors. The mesh positions are computed once and
-each set is sampled with the same seed.
+each set is sampled with `seed`.
 
 The outpainter and the CLIP models run in evaluation mode. The weights of every model stay in memory maps of safetensors
 files; `run` copies the weights of a model to the GPU for the time that model runs. `load` and `download` do not use the
@@ -73,14 +73,13 @@ OUTPAINTER = {
     "skip_type": "adaptive",
     "weights": None,
 }
-# Side in texels of the outpainter's atlas, sampling steps, guidance scale and guidance interval, guidance rescale, seed
-# and bounding-box half size of the mesh positions. Documented.
+# Side in texels of the outpainter's atlas, sampling steps, guidance scale and guidance interval, guidance rescale and
+# bounding-box half size of the mesh positions. Documented.
 SIZE = 1024
 STEPS = 30
 CFG_SCALE = 3.5
 GUIDANCE_INTERVAL = (0.0, 1.0)
 GUIDANCE_RESCALE = 0.0
-SEED = 42
 MESH_SCALE = 0.5
 # Share of valid texels from which a reduced texel counts as known, and the number of texels the atlas grows past the UV
 # layout. Guessed.
@@ -226,7 +225,7 @@ def _grown(texture, known):
     return texture
 
 
-def run(ctx, mesh, covered, valid, sets):
+def run(ctx, mesh, covered, valid, sets, seed):
     vertices, faces, uv = meshops.load_glb(mesh)
     covered_texels = np.asarray(Image.open(covered)) > 127
     valid_texels = np.asarray(Image.open(valid)) > 127
@@ -257,7 +256,7 @@ def run(ctx, mesh, covered, valid, sets):
             start = 0.1 + 0.85 * number / len(sets)
             pipe.pbar = _Steps(ctx, start, start + 0.85 / len(sets), f"set {number + 1}/{len(sets)}, ")
             pipe.prepare_condition_info = lambda *_: condition
-            torch.manual_seed(SEED)
+            torch.manual_seed(seed)
             sampled = pipe(None, None, None, condition["baked_image"], condition["baked_weight"], mask, position, STEPS,
                            CFG_SCALE, GUIDANCE_INTERVAL, GUIDANCE_RESCALE)
             enlarged = F.interpolate(sampled.flip(2) * flipped, scale_factor=factor, mode="bilinear",

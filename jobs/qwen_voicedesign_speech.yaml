@@ -1,0 +1,18 @@
+description: Speaks one line of text with Qwen3-TTS 1.7B VoiceDesign in a voice created from a description.
+params:
+  text: The line to speak, written as it should be pronounced.
+  voice_description: Description of the voice and delivery - gender, age, pitch, timbre, pace, emotion, accent. An empty value lets the model pick a voice.
+  language: Language code of the text; auto lets the model infer the language from the text.
+  do_sample: Sampling of the first-codebook speech tokens; false uses greedy decoding and ignores temperature, top_k and top_p.
+  temperature: Sampling temperature of the first-codebook speech tokens.
+  top_k: Top-k filter of the first-codebook sampling; 0 disables it.
+  top_p: Nucleus filter of the first-codebook sampling; 1.0 disables it.
+  repetition_penalty: Penalty on first-codebook speech tokens already generated; 1.0 disables it.
+  subtalker_dosample: Sampling of the codebooks after the first; false uses greedy decoding and ignores the subtalker_ values below.
+  subtalker_temperature: Sampling temperature of the codebooks after the first.
+  subtalker_top_k: Top-k filter of the sampling of the codebooks after the first; 0 disables it.
+  subtalker_top_p: Nucleus filter of the sampling of the codebooks after the first; 1.0 disables it.
+  max_new_tokens: Upper limit of generated speech frames.
+  seed: Seed of the random draws; "random" picks a seed. Item i of a job with count above 1 uses the seed plus i.
+outputs:
+  speech.wav: The spoken line, mono 16-bit PCM WAV.

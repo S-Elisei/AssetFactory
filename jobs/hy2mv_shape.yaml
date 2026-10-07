@@ -1,0 +1,19 @@
+description: Makes an untextured mesh of one object from its front view and up to three more views. The backgrounds are removed, Hunyuan3D-2 multiview generates the shape, the mesh is cleaned into one closed manifold surface and decimated to target_faces.
+params:
+  steps: Number of sampling steps.
+  guidance_scale: Guidance strength.
+  octree_resolution: Resolution of the grid the surface is extracted on.
+  num_chunks: Number of query points the volume decoder evaluates per batch.
+  target_faces: Face count of the final mesh. A value of 0 or below leaves the cleaned mesh undecimated.
+  seed: Seed of the random draws; "random" picks a seed. Item i of a job with count above 1 uses the seed plus i.
+inputs:
+  front: The object seen from the front at eye level, the whole object visible. An image whose background is already transparent is used as is, its alpha being the object mask; any other image has its background removed. The same holds for every view.
+  left: The same object seen from its left side, its front pointing to the left edge of the image.
+  back: The same object seen from behind.
+  right: The same object seen from its right side, its front pointing to the right edge of the image.
+outputs:
+  mesh.glb: The mesh, Y up, with welded vertex normals, no UVs and no texture.
+  image_0.png: The front view after background removal.
+  image_1.png: The first of the views left, back and right that was sent, after background removal.
+  image_2.png: The second of the views left, back and right that was sent, after background removal.
+  image_3.png: The third of the views left, back and right that was sent, after background removal.

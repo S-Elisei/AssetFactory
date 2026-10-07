@@ -1,0 +1,12 @@
+description: Makes an untextured mesh of one object from one image. The background is removed, TripoSG generates the shape, the mesh is cleaned into one closed manifold surface and decimated to target_faces.
+params:
+  steps: Number of sampling steps.
+  guidance_scale: Classifier-free guidance scale.
+  octree_depth: Depth of the grid the surface is extracted on, 2^depth cells per axis.
+  target_faces: Face count of the final mesh. A value of 0 or below leaves the cleaned mesh undecimated.
+  seed: Seed of the random draws; "random" picks a seed. Item i of a job with count above 1 uses the seed plus i.
+inputs:
+  image: One image of a single object, the whole object visible. An image whose background is already transparent is used as is, its alpha being the object mask; any other image has its background removed.
+outputs:
+  mesh.glb: The mesh, Y up, with welded vertex normals, no UVs and no texture.
+  image_0.png: The input image after background removal.

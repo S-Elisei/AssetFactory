@@ -34,8 +34,9 @@ through a REST API and a web UI.
 8. **`Job`** — the base class of a job.
    - A subclass declares `Params`: a pydantic class with the names, types, limits and enums of the params, without
      default values.
-   - A subclass implements `async run(ctx)`: a strictly linear sequence of stage calls, without branches. After the
-     last stage, `run` assembles the job's outputs from the stage outputs (for example, writes the textured GLB).
+   - A subclass implements `async run(ctx)`: a linear sequence of stage calls: a condition on the params may skip a
+     stage, but never puts one stage in place of another. After the last stage, `run` assembles the job's outputs
+     from the stage outputs (for example, writes the textured GLB).
    - Through `ctx` a subclass:
      - calls stages: `await ctx.local(stage, …)` goes to `LocalQueue`, `await ctx.cloud(app, …)` to `CloudQueue`;
      - reports progress;
@@ -44,8 +45,8 @@ through a REST API and a web UI.
    - Next to each subclass lies a yaml file: the job description (at most one paragraph) and one line per param,
      input and output.
    - `Params` and the yaml give a JSON schema; it validates requests and builds the guide and the UI forms.
-9. **`Job` subclasses**, one file in `jobs/` per line. Identical code in different jobs is duplicated. Every job that
-   makes a shape has a required `target_faces`.
+9. **`Job` subclasses**, one file in `jobs/` per line. Identical code in different jobs is duplicated. Every job whose
+   chain has `decimate` has a required `target_faces`.
    1. `zimage_text_to_image.py`
    2. `zimage_image_to_image.py`
    3. `flux2_text_to_image.py`
@@ -73,6 +74,8 @@ through a REST API and a web UI.
    25. `chatterbox_speech.py`
    26. `qwen_voicedesign_speech.py`
 10. **`Runner`** — runs every job as an asyncio task and keeps its status, cancel and failure in `Store`.
+    - `seed` is a param of the jobs whose stages are seeded: an integer or `"random"`; the Api replaces `"random"`
+      with a random integer when it creates the job.
     - `count` in a request gives that many runs of `run`, with seed, seed+1 and so on.
     - The job's priority is the priority of its calls.
 11. **`Notifier`** — the `notify_url` webhook.
@@ -83,7 +86,7 @@ through a REST API and a web UI.
     - `GET /api/usage` — the guide from `usage.md` and every schema in one response;
     - `GET /api/health`;
     - `POST /api/files`, `GET /api/files?kind=&origin=`, `GET /api/files/{id}`, `GET /api/files/{id}/content`;
-    - `POST /api/jobs {job, params, inputs, count?, seed?, priority?, label?, notify_url?}`;
+    - `POST /api/jobs {job, params, inputs, count?, priority?, label?, notify_url?}`;
     - `POST /api/batches` — all jobs are created or none; `GET /api/batches/{id}?wait=`;
     - `GET /api/jobs?status=&job=&batch_id=` (history, paged) and `GET /api/jobs/{id}?wait=`;
     - cancel a job, retry it with the same or a new seed, delete it with its files;

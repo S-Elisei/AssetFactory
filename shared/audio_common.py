@@ -11,7 +11,7 @@ from context import InputError
 def seed_everything(seed):
     """Seeds the random generators of Python, numpy and torch with `seed`."""
     random.seed(seed)
-    np.random.seed(seed % 2**32)
+    np.random.seed(seed)
     torch.manual_seed(seed)
 
 

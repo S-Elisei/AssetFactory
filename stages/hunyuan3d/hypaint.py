@@ -7,7 +7,7 @@ model (InstructPix2Pix), otherwise it is composited on white; a multiview diffus
 object from the reference image and from normal and position renders of the mesh; the views are back-projected into
 the mesh's UV layout and the texels no view covers are inpainted; with a `normal_source` a tangent-space normal map is
 baked from its surface onto the mesh's UV layout, on the texel grid that custom_rasterizer returns. The reference
-image is the view from +Z (Y up).
+image is the view from +Z (Y up). `seed` seeds the delight model and the multiview diffusion model.
 
 The weights of every model stay in memory maps of safetensors files; `run` copies the weights of a model to the GPU for
 the time that model runs. `load` and `download` do not use the Worker context."""
@@ -62,8 +62,6 @@ VIEWS = ((0, 0, 1.0, 21), (90, 0, 0.1, 12), (180, 0, 0.5, 15), (270, 0, 0.1, 18)
          (180, -90, 0.05, 37))
 # Exponent of the view-angle cosine in the baking weight of a view. Documented.
 BAKE_EXPONENT = 4
-# Seed of the multiview generation. Documented.
-SEED = 0
 # Border around the cropped object, in the share of its width and height. Documented.
 BORDER_RATIO = 0.2
 # Image and text guidance scales of the delight model. Documented.
@@ -170,10 +168,12 @@ def _on_step(ctx, start, end, label):
 
 
 class _Delight(Light_Shadow_Remover):
-    """The delight step of hy3dgen around `pipeline`, a callable that runs the InstructPix2Pix pipeline."""
+    """The delight step of hy3dgen around `pipeline`, a callable that runs the InstructPix2Pix pipeline; the sampling is
+    seeded with `seed`."""
 
-    def __init__(self, pipeline):
-        self.device, self.cfg_image, self.cfg_text, self.pipeline = DEVICE, CFG_IMAGE, CFG_TEXT, pipeline
+    def __init__(self, pipeline, seed):
+        self.device, self.cfg_image, self.cfg_text = DEVICE, CFG_IMAGE, CFG_TEXT
+        self.pipeline = lambda **arguments: pipeline(**{**arguments, "generator": torch.manual_seed(seed)})
 
 
 def _recentered(image):
@@ -204,13 +204,13 @@ def _mesh_render(vertices, faces, uv, size):
     return render
 
 
-def _views(ctx, pipeline, reference, normals, positions):
+def _views(ctx, pipeline, reference, normals, positions, seed):
     """Returns the six generated views (PIL images) from the reference image and the control renders."""
     size = (VIEW_SIZE, VIEW_SIZE)
-    torch.manual_seed(SEED)
+    torch.manual_seed(seed)
     return pipeline(
         [reference],
-        generator=torch.Generator().manual_seed(SEED),
+        generator=torch.Generator().manual_seed(seed),
         num_in_batch=len(VIEWS),
         camera_info_gen=[[view[3] for view in VIEWS]],
         camera_info_ref=[[0]],
@@ -333,7 +333,7 @@ def _base_color(ctx, render, views):
     return render.uv_inpaint(texture, covered.squeeze(-1).cpu().numpy().astype(np.uint8) * 255)
 
 
-def run(ctx, mesh, image, normal_source, texture_resolution, delight):
+def run(ctx, mesh, image, normal_source, texture_resolution, delight, seed):
     vertices, faces, uv = meshops.load_input_mesh(mesh, texture_resolution)
     uv = np.asarray(uv, np.float64)
 
@@ -342,7 +342,7 @@ def run(ctx, mesh, image, normal_source, texture_resolution, delight):
     if delight:
         with _on_gpu(ctx.model["delight"]):
             remover = _Delight(partial(ctx.model["delight"],
-                                       callback_on_step_end=_on_step(ctx, 0.02, 0.25, "delighting")))
+                                       callback_on_step_end=_on_step(ctx, 0.02, 0.25, "delighting")), seed)
             reference = remover(reference)
     else:
         reference = _white_background(reference)
@@ -355,7 +355,7 @@ def run(ctx, mesh, image, normal_source, texture_resolution, delight):
     positions = [render.render_position(elevation, azimuth, return_type="pl") for azimuth, elevation, _, _ in VIEWS]
     ctx.check_cancel()
     with _on_gpu(ctx.model["multiview"]):
-        views = _views(ctx, ctx.model["multiview"], reference, normals, positions)
+        views = _views(ctx, ctx.model["multiview"], reference, normals, positions, seed)
     ctx.check_cancel()
 
     base_color = _base_color(ctx, render, views)

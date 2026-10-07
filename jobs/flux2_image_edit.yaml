@@ -1,0 +1,11 @@
+description: Edits or combines reference images following a text instruction with FLUX.2 [klein] 4B. The output has the requested width and height.
+params:
+  prompt: Instruction in natural language; the reference images are called image 1, image 2, ... in the order they are sent.
+  width: Output width in pixels, independent of the sizes of the reference images.
+  height: Output height in pixels, independent of the sizes of the reference images.
+  steps: Number of sampling steps.
+  seed: Seed of the random draws; "random" picks a seed. Item i of a job with count above 1 uses the seed plus i.
+inputs:
+  reference_images: The images to edit or to take subjects and style from.
+outputs:
+  image.png: The generated image, RGB.

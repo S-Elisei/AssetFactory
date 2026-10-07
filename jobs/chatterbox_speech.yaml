@@ -1,0 +1,15 @@
+description: Speaks one line of text with Chatterbox Multilingual V3, in the built-in voice or in a voice cloned from a voice reference.
+params:
+  text: The line to speak, written as it should be pronounced.
+  language: Language code of the text.
+  exaggeration: Emotion intensity. Higher values make the delivery more intense and faster.
+  cfg_weight: Classifier-free guidance weight. Lower values give slower, looser delivery; 0 disables guidance.
+  temperature: Sampling temperature. Lower values give more monotone, repeatable delivery.
+  repetition_penalty: Penalty on speech tokens already generated; 1.0 disables it.
+  min_p: Min-p filter of the sampling; 0 disables it.
+  top_p: Nucleus filter of the sampling; 1.0 disables it.
+  seed: Seed of the random draws; "random" picks a seed. Item i of a job with count above 1 uses the seed plus i.
+inputs:
+  voice_reference: Recording of the voice to clone, one speaker; WAV, FLAC, OGG or MP3. Without it the built-in voice speaks.
+outputs:
+  speech.wav: The spoken line, mono 16-bit PCM WAV.

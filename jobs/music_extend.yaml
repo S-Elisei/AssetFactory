@@ -1,0 +1,13 @@
+description: Continues a music track past its end with ACE-Step 1.5. The output is the track followed by the new music.
+params:
+  caption: Description of the music of the continuation.
+  lyrics: Lyrics of the continuation. Section tags such as [Verse] or [Chorus] stand on their own line. Empty lyrics give music without vocals.
+  extend_seconds: Length of the appended music in seconds.
+  vocal_language: Language code of the lyrics; unknown passes no language.
+  steps: Number of diffusion steps.
+  shift: Timestep shift of the diffusion schedule; higher values spend more of the steps at high noise levels, 1.0 leaves the schedule linear.
+  seed: Seed of the random draws; "random" picks a seed. Item i of a job with count above 1 uses the seed plus i.
+inputs:
+  audio: The source track; WAV, FLAC, OGG or MP3.
+outputs:
+  music.wav: The track followed by the new music, stereo 16-bit PCM WAV.

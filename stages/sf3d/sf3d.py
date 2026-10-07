@@ -1,6 +1,7 @@
 """Stage sf3d: a UV-unwrapped GLB with a base-color texture and a normal map of one object from an RGBA image with
 stable-fast-3d. The object is recentered and scaled to `foreground_ratio`. The mesh is rotated by `input_elevation_deg`
-about the X axis, then by 180 degrees about the Y axis. The mesh is not cleaned."""
+about the X axis, then by 180 degrees about the Y axis. The mesh is not cleaned. `seed` seeds the dithering that quantizes the textures to 8
+bits."""
 import mapped
 import numpy as np
 import torch
@@ -63,13 +64,13 @@ def load():
     return model.to(DEVICE).eval()
 
 
-def run(ctx, image, texture_resolution, remesh, target_vertex_count, foreground_ratio, input_elevation_deg):
+def run(ctx, image, texture_resolution, remesh, target_vertex_count, foreground_ratio, input_elevation_deg, seed):
     ctx.progress(0.0, "preprocessing")
     foreground = resize_foreground(Image.open(image), foreground_ratio)
     ctx.check_cancel()
 
     ctx.progress(0.15, "reconstructing")
-    np.random.seed(0)
+    np.random.seed(seed)
     with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
         mesh, _ = ctx.model.run_image(foreground, bake_resolution=texture_resolution, remesh=remesh,
                                       vertex_count=target_vertex_count)

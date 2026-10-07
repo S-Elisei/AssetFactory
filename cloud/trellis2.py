@@ -194,7 +194,7 @@ class Trellis2:
 
         self.remover = bgremove.load_on_gpu()
         example = Path(SOURCE) / "assets" / "example_image" / "T.png"
-        self._generate(example.read_bytes(), {"resolution": 1024, "steps": 2, "decimation_target": 100000, "seed": 0},
+        self._generate(example.read_bytes(), {"resolution": 1024, "steps": 2, "target_faces": 100000, "seed": 0},
                        silent)
 
     @modal.method()
@@ -254,7 +254,7 @@ class Trellis2:
             vertices, faces, center=torch.zeros(3, device="cuda"), scale=(resolution + 3 * REMESH_BAND) / resolution,
             resolution=resolution, band=REMESH_BAND, project_back=REMESH_PROJECT, bvh=bvh))
         report(0.93, "simplifying", True)
-        mesh.simplify(params["decimation_target"])
+        mesh.simplify(params["target_faces"])
         vertices, faces = mesh.read()
         report(0.97, "writing", True)
         vertices, faces = vertices.cpu().numpy(), faces.cpu().numpy()

@@ -1,0 +1,10 @@
+description: Re-renders one source image following a text prompt with Z-Image-Turbo. The output has the aspect ratio of the source, scaled to a size the model supports.
+params:
+  prompt: Description of the desired result in natural language, English or Chinese.
+  strength: Share of the sampling schedule that is run on the source. Low values keep more of the source, 1.0 replaces it.
+  steps: Length of the full sampling schedule; about steps times strength sampling steps are run.
+  seed: Seed of the random draws; "random" picks a seed. Item i of a job with count above 1 uses the seed plus i.
+inputs:
+  image: The source image.
+outputs:
+  image.png: The generated image, RGB.

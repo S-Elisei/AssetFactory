@@ -1,0 +1,24 @@
+description: Makes a textured mesh of one object from its front view and up to three more views. The backgrounds are removed, Hunyuan3D-2 multiview generates the shape, the mesh is cleaned into one closed manifold surface, decimated to target_faces, UV-unwrapped and textured from the front view with Hunyuan3D-Paint.
+params:
+  steps: Number of sampling steps of the shape.
+  guidance_scale: Guidance strength of the shape.
+  octree_resolution: Resolution of the grid the surface is extracted on.
+  num_chunks: Number of query points the volume decoder evaluates per batch.
+  target_faces: Face count of the decimated mesh. A value of 0 or below leaves the cleaned mesh undecimated.
+  texture_resolution: Side in pixels of the base-color texture and of the normal map.
+  delight: true removes lighting, shadows and highlights from the front view before texturing; false paints the lighting of the view into the texture.
+  normal_map: true bakes a tangent-space normal map from the cleaned mesh before decimation; false writes no normal map.
+  seed: Seed of the random draws; "random" picks a seed. Item i of a job with count above 1 uses the seed plus i.
+inputs:
+  front: The object seen from the front at eye level, the whole object visible; the reference of the texture. An image whose background is already transparent is used as is, its alpha being the object mask; any other image has its background removed. The same holds for every view.
+  left: The same object seen from its left side, its front pointing to the left edge of the image.
+  back: The same object seen from behind.
+  right: The same object seen from its right side, its front pointing to the right edge of the image.
+outputs:
+  mesh.glb: The unwrapped mesh, Y up, with its UVs, welded vertex normals, the base-color texture, the normal texture when normal_map is true, metallic factor 0 and roughness factor 1.
+  base_color.png: The base-color texture.
+  normal_map.png: The tangent-space normal map; written when normal_map is true.
+  image_0.png: The front view after background removal.
+  image_1.png: The first of the views left, back and right that was sent, after background removal.
+  image_2.png: The second of the views left, back and right that was sent, after background removal.
+  image_3.png: The third of the views left, back and right that was sent, after background removal.

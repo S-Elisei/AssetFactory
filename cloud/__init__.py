@@ -11,7 +11,7 @@ call and starts from a memory snapshot taken after the models are loaded.
 
 | module       | class        | `run` arguments                       | params                                                              |
 |--------------|--------------|---------------------------------------|---------------------------------------------------------------------|
-| trellis2     | Trellis2     | `image`, `params`, `progress`         | `resolution` (512, 1024 or 1536), `steps`, `decimation_target`, `seed` |
+| trellis2     | Trellis2     | `image`, `params`, `progress`         | `resolution` (512, 1024 or 1536), `steps`, `target_faces`, `seed` |
 | hunyuan3d21  | Hunyuan3D21  | `image`, `params`, `progress`         | `steps`, `guidance_scale`, `octree_resolution`, `seed`              |
 | unitex       | UniTEX       | `mesh`, `image`, `params`, `progress` | `delight` (bool), `texture_size`, `seed`                            |
 
@@ -19,6 +19,7 @@ call and starts from a memory snapshot taken after the models are loaded.
 background with BiRefNet unless it is already cut out. `mesh` (unitex) is the GLB of a triangle mesh with
 non-overlapping UVs; `texture_size` is the side in texels at which the overlap is measured. `params` is a dict of
 JSON-able values of exactly the listed keys; `run` checks none of them.
+`target_faces` (trellis2) is the face count that the simplification on the GPU aims for.
 
 `progress` is a `modal.Queue`. `run` puts on it the tuples `(fraction, message)`, `fraction` a float in 0..1 of the call
 and `message` a str, at the start of each phase and at the sampling steps. A put that fails is dropped. The last

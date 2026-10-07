@@ -1,3 +1,9 @@
 modal==1.6.1
 psutil==7.2.2
 aiohttp==3.14.3
+pydantic==2.13.5
+pyyaml==6.0.3
+trimesh==5.1.1
+numpy==2.5.3
+scipy==1.18.1
+pillow==12.3.0

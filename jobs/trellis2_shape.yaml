@@ -1,0 +1,10 @@
+description: Makes an untextured mesh of one object from one image. TRELLIS.2 generates the shape on a Modal GPU and simplifies it to target_faces faces, the mesh is cleaned into one closed manifold surface and decimated to target_faces. Requires ~70 s ($0.045) of cloud work at resolution 1024, 12 steps and target_faces 500000.
+params:
+  resolution: Voxel resolution of the generated shape.
+  steps: Number of sampling steps of each sampler.
+  target_faces: Face count of the simplification on the Modal GPU before the cleaning and of the final mesh.
+  seed: Seed of the random draws; "random" picks a seed. Item i of a job with count above 1 uses the seed plus i.
+inputs:
+  image: One image of a single object, the whole object visible. An image whose background is already transparent is used as is, its alpha being the object mask; any other image has its background removed.
+outputs:
+  mesh.glb: The mesh, Y up, with welded vertex normals, no UVs and no texture.

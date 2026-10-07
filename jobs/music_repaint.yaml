@@ -1,0 +1,14 @@
+description: Regenerates one time range of a music track from a caption and optional lyrics with ACE-Step 1.5 and keeps the audio outside the range. The output has the length of the track.
+params:
+  caption: Description of the music in the repainted range.
+  lyrics: Lyrics of the repainted range. Section tags such as [Verse] or [Chorus] stand on their own line. Empty lyrics give music without vocals.
+  start_seconds: Start of the range in seconds from the beginning of the track; below the end of the range and below the length of the track.
+  end_seconds: End of the range in seconds from the beginning of the track; -1 is the end of the track.
+  vocal_language: Language code of the lyrics; unknown passes no language.
+  steps: Number of diffusion steps.
+  shift: Timestep shift of the diffusion schedule; higher values spend more of the steps at high noise levels, 1.0 leaves the schedule linear.
+  seed: Seed of the random draws; "random" picks a seed. Item i of a job with count above 1 uses the seed plus i.
+inputs:
+  audio: The source track; WAV, FLAC, OGG or MP3.
+outputs:
+  music.wav: The track with the repainted range, stereo 16-bit PCM WAV.

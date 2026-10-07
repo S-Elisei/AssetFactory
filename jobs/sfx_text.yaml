@@ -1,0 +1,8 @@
+description: Generates a sound effect or ambience from a text prompt with Stable Audio 3 Small-SFX.
+params:
+  prompt: Description of the sound - source, action, space and recording character.
+  duration: Length of the output in seconds.
+  steps: Number of sampling steps.
+  seed: Seed of the random draws; "random" picks a seed. Item i of a job with count above 1 uses the seed plus i.
+outputs:
+  audio.wav: The sound effect, 16-bit PCM WAV.

@@ -1,0 +1,12 @@
+description: Textures one mesh with non-overlapping UVs from one reference image with Hunyuan3D-Paint. The background of the image is removed first. The geometry and the UVs of the mesh are kept.
+params:
+  texture_resolution: Side in pixels of the base-color texture.
+  delight: true removes lighting, shadows and highlights from the image before texturing; false paints the lighting of the image into the texture.
+  seed: Seed of the random draws; "random" picks a seed. Item i of a job with count above 1 uses the seed plus i.
+inputs:
+  mesh: One GLB, Y up with the front of the object facing +Z. All triangle meshes of the scene are merged into one mesh. The mesh needs UVs in which no texel of the texture_resolution texture lies inside more than one UV triangle; mesh_unwrap makes such UVs.
+  image: One reference image of the same object seen from the front, the whole object visible; it is the view from +Z. An image whose background is already transparent is used as is, its alpha being the object mask; any other image has its background removed.
+outputs:
+  mesh.glb: The input mesh with its own UVs, welded vertex normals, the base-color texture, metallic factor 0 and roughness factor 1.
+  base_color.png: The base-color texture.
+  image_0.png: The reference image after background removal.

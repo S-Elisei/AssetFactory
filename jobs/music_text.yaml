@@ -1,0 +1,17 @@
+description: Generates a piece of music from a caption and optional lyrics with ACE-Step 1.5.
+params:
+  caption: Description of the music - genre, mood, instruments, timbre, era, production style, vocal type and tempo feel.
+  lyrics: Lyrics of the piece. Section tags such as [Verse] or [Chorus] stand on their own line. Empty lyrics give music without vocals.
+  duration: Length of the output in seconds.
+  bpm: Tempo in beats per minute. 0 passes no tempo; with thinking true the planner chooses one, otherwise the tempo is left to the model.
+  keyscale: Musical key and mode. An empty value passes no key; with thinking true the planner chooses one, otherwise the key is left to the model.
+  timesignature: Time signature, 2 is 2/4, 3 is 3/4, 4 is 4/4, 6 is 6/8. An empty value passes none; with thinking true the planner chooses one, otherwise it is left to the model.
+  vocal_language: Language code of the lyrics; unknown passes no language. With thinking true the language the planner writes is used instead.
+  thinking: true runs the language-model planner before the music model. The planner fills bpm, keyscale and timesignature where they are unset and plans the structure of the piece.
+  rewrite_caption: With thinking true, the music model receives the caption rewritten by the planner instead of the given one. No effect with thinking false.
+  lm_temperature: Sampling temperature of the planner. No effect with thinking false.
+  steps: Number of diffusion steps.
+  shift: Timestep shift of the diffusion schedule; higher values spend more of the steps at high noise levels, 1.0 leaves the schedule linear.
+  seed: Seed of the random draws; "random" picks a seed. Item i of a job with count above 1 uses the seed plus i.
+outputs:
+  music.wav: The piece, stereo 16-bit PCM WAV.

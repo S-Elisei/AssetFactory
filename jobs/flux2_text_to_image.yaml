@@ -1,0 +1,9 @@
+description: Generates one image from a text prompt with FLUX.2 [klein] 4B.
+params:
+  prompt: Description of the image in natural language.
+  width: Output width in pixels.
+  height: Output height in pixels.
+  steps: Number of sampling steps.
+  seed: Seed of the random draws; "random" picks a seed. Item i of a job with count above 1 uses the seed plus i.
+outputs:
+  image.png: The generated image, RGB.

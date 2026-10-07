@@ -1,0 +1,10 @@
+description: Keeps a sound clip and generates audio after its end up to the total duration with Stable Audio 3 Small-SFX.
+params:
+  prompt: Description of the whole clip including the continuation.
+  duration: Total length of the output in seconds, the clip included; above the length of the clip.
+  steps: Number of sampling steps.
+  seed: Seed of the random draws; "random" picks a seed. Item i of a job with count above 1 uses the seed plus i.
+inputs:
+  audio: The source clip; WAV, FLAC or OGG. It forms the beginning of the output.
+outputs:
+  audio.wav: The clip followed by the continuation, 16-bit PCM WAV.

@@ -6,7 +6,7 @@ outputs, wherever below it they lie. A file row: file_id, kind, origin (`upload`
 name, path (absolute), size, created, job_id and item (None for an upload). `kind` is opaque to the Store.
 
 Jobs. A job row: seq (the paging cursor), job_id, job (the file name of its module in `jobs/`), params (dict), inputs
-(dict of input name to the list of its file_ids), count, seed, priority, label, notify_url, batch_id, status, error (None,
+(dict of input name to the list of its file_ids), count, priority, label, notify_url, batch_id, status, error (None,
 or a dict with `kind` and `message`), outputs (per item of `count`, the list of the file_ids of that item), created,
 started, finished (epoch seconds, None until they happen), work_seconds and cloud_dollars. Statuses: queued, running,
 then one of FINISHED. Methods that take a job_id or a file_id require an id that exists; `job`, `file` and `batch`
@@ -36,7 +36,6 @@ CREATE TABLE jobs (
     params TEXT NOT NULL,
     inputs TEXT NOT NULL,
     count INTEGER NOT NULL,
-    seed INTEGER NOT NULL,
     priority INTEGER NOT NULL,
     label TEXT,
     notify_url TEXT,
@@ -126,10 +125,10 @@ class Store:
         """The folder of the job; it exists from the creation of the job to its deletion."""
         return DATA / "jobs" / job_id
 
-    def create_job(self, job, params, inputs, count, seed, priority, label, notify_url):
+    def create_job(self, job, params, inputs, count, priority, label, notify_url):
         """Inserts a queued job with the given fields and returns its row."""
         with self._db:
-            job_id = self._insert_job(job, params, inputs, count, seed, priority, label, notify_url, None)
+            job_id = self._insert_job(job, params, inputs, count, priority, label, notify_url, None)
         return self.job(job_id)
 
     def job(self, job_id):
@@ -226,11 +225,11 @@ class Store:
                               path.stat().st_size, time.time(), job_id, item))
         return self.file(file_id)
 
-    def _insert_job(self, job, params, inputs, count, seed, priority, label, notify_url, batch_id):
+    def _insert_job(self, job, params, inputs, count, priority, label, notify_url, batch_id):
         job_id = _new_id("j")
-        self._db.execute("INSERT INTO jobs (job_id, job, params, inputs, count, seed, priority, label, notify_url, "
-                         "batch_id, status, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)",
-                         (job_id, job, json.dumps(params), json.dumps(inputs), count, seed, priority, label,
+        self._db.execute("INSERT INTO jobs (job_id, job, params, inputs, count, priority, label, notify_url, "
+                         "batch_id, status, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)",
+                         (job_id, job, json.dumps(params), json.dumps(inputs), count, priority, label,
                           notify_url, batch_id, time.time()))
         self.job_dir(job_id).mkdir(parents=True)
         return job_id

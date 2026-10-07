@@ -1,0 +1,10 @@
+description: Generates a new version of a sound clip steered by a prompt with Stable Audio 3 Small-SFX. The output has the length of the clip.
+params:
+  prompt: Description of the desired result.
+  noise_level: Starting noise level. Low values keep the rhythm and envelope of the clip, 1.0 gives the clip no influence.
+  steps: Number of sampling steps, run from noise_level down to 0.
+  seed: Seed of the random draws; "random" picks a seed. Item i of a job with count above 1 uses the seed plus i.
+inputs:
+  audio: The source clip; WAV, FLAC or OGG, any sample rate, mono or stereo.
+outputs:
+  audio.wav: The new version, 16-bit PCM WAV.
