@@ -10,6 +10,13 @@ function Invoke-Checked {
     if ($LASTEXITCODE -ne 0) { throw "command failed with exit code ${LASTEXITCODE}: $Command" }
 }
 
+function Test-Python {
+    # True when $Python runs $Code without error.
+    param([string]$Python, [string]$Code)
+    & $Python -c $Code 2>$null | Out-Null
+    return $LASTEXITCODE -eq 0
+}
+
 function Sync-PinnedRepo {
     # Makes $Dir a shallow checkout of $Url at exactly $Commit.
     param([string]$Url, [string]$Commit, [string]$Dir)

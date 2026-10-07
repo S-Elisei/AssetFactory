@@ -4,6 +4,7 @@ import hunyuan3d_common as common
 from PIL import Image
 
 REPO = "tencent/Hunyuan3D-2mv"
+REVISION = "3a761b539b29fe4ff64714813aa9560fd66f5de0"
 KEEP_LOADED = False
 # System RAM in GB that the Worker needs to start for this stage. Guessed.
 RAM_GB = 4.0
@@ -11,11 +12,11 @@ DIRECTORY = "hunyuan3d-dit-v2-mv-turbo"
 
 
 def download():
-    common.download(REPO, DIRECTORY)
+    common.download(REPO, REVISION, DIRECTORY)
 
 
 def load():
-    return common.load(REPO, DIRECTORY)
+    return common.load(REPO, REVISION, DIRECTORY)
 
 
 def run(ctx, front, left, back, right, steps, guidance_scale, octree_resolution, num_chunks, seed):

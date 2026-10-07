@@ -2,13 +2,13 @@
 stable-fast-3d. The object is recentered and scaled to `foreground_ratio`. The mesh is rotated by `input_elevation_deg`
 about the X axis, then by 180 degrees about the Y axis. The mesh is not cleaned. `seed` seeds the dithering that quantizes the textures to 8
 bits."""
+import hub
 import mapped
 import numpy as np
 import torch
 import trimesh
 from accelerate import init_empty_weights
 from context import MODELS
-from huggingface_hub import hf_hub_download
 from omegaconf import OmegaConf
 from PIL import Image
 from safetensors import safe_open
@@ -16,6 +16,9 @@ from sf3d.system import SF3D
 from sf3d.utils import resize_foreground
 
 REPO = "stabilityai/stable-fast-3d"
+REVISION = "f0c9a8ffd62cb1bbc8a7a53c9f87a0be1b6be778"
+# Revision of the image tokenizer's DINOv2 repository named in the config of REPO.
+DINOV2_REVISION = "47b73eefe95e8d44ec3623f8890bd894b6ea2d6c"
 KEEP_LOADED = False
 # System RAM in GB that the Worker needs to start for this stage. Guessed.
 RAM_GB = 4.0
@@ -34,11 +37,19 @@ BF16_WEIGHTS = MODELS / "sf3d" / "model.safetensors"
 DEVICE = torch.device("cuda")
 
 
+def _config():
+    """Returns the config of REPO with the image tokenizer's DINOv2 given as the path of its pinned snapshot."""
+    config = OmegaConf.load(hub.file(REPO, REVISION, "config.yaml"))
+    tokenizer = config.image_tokenizer
+    tokenizer.pretrained_model_name_or_path = hub.snapshot(tokenizer.pretrained_model_name_or_path, DINOV2_REVISION,
+                                                           ["config.json"])
+    return config
+
+
 def download():
     """Fetches the checkpoint and the config of the image tokenizer's DINOv2, and writes BF16_WEIGHTS."""
-    config = OmegaConf.load(hf_hub_download(REPO, "config.yaml"))
-    hf_hub_download(config.image_tokenizer.pretrained_model_name_or_path, "config.json")
-    source = hf_hub_download(REPO, "model.safetensors")
+    _config()
+    source = hub.file(REPO, REVISION, "model.safetensors")
     if not BF16_WEIGHTS.exists():
         BF16_WEIGHTS.parent.mkdir(parents=True, exist_ok=True)
         with safe_open(source, "pt") as file:
@@ -50,7 +61,7 @@ def download():
 def load():
     """Returns the SF3D model on the GPU, built without weights, without the UNUSED entries, and loaded from
     BF16_WEIGHTS with strict=False."""
-    config = OmegaConf.load(hf_hub_download(REPO, "config.yaml"))
+    config = _config()
     OmegaConf.resolve(config)
     with init_empty_weights():
         model = SF3D(config)

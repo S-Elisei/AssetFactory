@@ -7,18 +7,19 @@ import json
 from pathlib import Path
 
 import audio_common as common
+import hub
 import mapped
 import soundfile
 import torch
 from accelerate import init_empty_weights
 from context import MODELS, InputError
-from huggingface_hub import hf_hub_download, snapshot_download
 from safetensors import safe_open
 from stable_audio_3 import StableAudioModel
 from stable_audio_3.factory import create_diffusion_cond_from_config
 from stable_audio_3.models.conditioners import T5GemmaConditioner
 
 REPO = "stabilityai/stable-audio-3-small-sfx"
+REVISION = "ae12755283df9d62ca39a9b050a39a0b607b8c20"
 KEEP_LOADED = False
 # System RAM in GB that the Worker needs to start for this stage. Guessed.
 RAM_GB = 3.5
@@ -33,7 +34,7 @@ FORMATS = "WAV, FLAC or OGG"
 
 def download():
     """Fetches the checkpoint and writes FP16_WEIGHTS; an existing FP16_WEIGHTS is kept."""
-    source = Path(snapshot_download(REPO, allow_patterns=FILES)) / "model.safetensors"
+    source = Path(hub.snapshot(REPO, REVISION, FILES)) / "model.safetensors"
     if not FP16_WEIGHTS.exists():
         FP16_WEIGHTS.parent.mkdir(parents=True, exist_ok=True)
         with safe_open(source, "pt") as file:
@@ -44,16 +45,18 @@ def download():
 def load():
     """Returns the StableAudioModel. Everything but the prompt encoder is built without weights, loaded from FP16_WEIGHTS
     onto the GPU and runs in fp16. The prompt encoder (T5Gemma) is built by transformers directly on the GPU and runs in
-    bf16."""
-    config = json.loads(Path(hf_hub_download(REPO, "model_config.json")).read_text(encoding="utf-8"))
+    bf16, from the folder of the pinned snapshot that the config names."""
+    snapshot = Path(hub.snapshot(REPO, REVISION, FILES))
+    config = json.loads((snapshot / "model_config.json").read_text(encoding="utf-8"))
     conditioning = config["model"]["conditioning"]
     prompt = next(item for item in conditioning["configs"] if item["id"] == "prompt")
     others = {**conditioning, "configs": [item for item in conditioning["configs"] if item is not prompt]}
     with init_empty_weights():
         model = create_diffusion_cond_from_config({**config, "model": {**config["model"], "conditioning": others}})
     with torch.device(DEVICE):
-        model.conditioner.conditioners["prompt"] = T5GemmaConditioner(output_dim=conditioning["cond_dim"],
-                                                                      **prompt["config"])
+        model.conditioner.conditioners["prompt"] = T5GemmaConditioner(
+            output_dim=conditioning["cond_dim"],
+            **{**prompt["config"], "model_path": str(snapshot / prompt["config"]["subfolder"]), "subfolder": None})
     with safe_open(FP16_WEIGHTS, "pt", device="cuda") as file:
         model.load_state_dict({key: file.get_tensor(key) for key in file.keys()}, assign=True)
     model.to(DEVICE, torch.float16).eval().requires_grad_(False)

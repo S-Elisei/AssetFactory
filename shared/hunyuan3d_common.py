@@ -1,16 +1,17 @@
 """Code shared by the Hunyuan3D-2 shape stages of the `hunyuan3d` environment: loading a Hunyuan3D-DiT turbo pipeline
 with the turbo VAE onto the GPU, and generating the raw mesh. Imports torch and hy3dgen."""
+import hub
 import numpy as np
 import torch
 import trimesh
 import yaml
 from accelerate import init_empty_weights
-from huggingface_hub import hf_hub_download
 from hy3dgen.shapegen.models.autoencoders import SurfaceExtractors
 from hy3dgen.shapegen.pipelines import Hunyuan3DDiTFlowMatchingPipeline, instantiate_from_config
 from safetensors import safe_open
 
 VAE_REPO = "tencent/Hunyuan3D-2"
+VAE_REVISION = "9cd649ba6913f7a852e3286bad86bfa9a2d83dcf"
 VAE_DIRECTORY = "hunyuan3d-vae-v2-0-turbo"
 DEVICE = torch.device("cuda")
 # Top-k mode of the FlashVDM volume decoder and algorithm of the surface extractor. Guessed.
@@ -18,16 +19,17 @@ TOPK_MODE = "merge"
 MC_ALGO = "mc"
 
 
-def _files(repo, directory):
-    """Returns [(repo, file)] of the DiT config, DiT weights, VAE config and VAE weights."""
-    return [(source, f"{folder}/{name}") for source, folder in ((repo, directory), (VAE_REPO, VAE_DIRECTORY))
+def _files(repo, revision, directory):
+    """Returns [(repo, revision, file)] of the DiT config, DiT weights, VAE config and VAE weights."""
+    return [(source, pinned, f"{folder}/{name}")
+            for source, pinned, folder in ((repo, revision, directory), (VAE_REPO, VAE_REVISION, VAE_DIRECTORY))
             for name in ("config.yaml", "model.fp16.safetensors")]
 
 
-def download(repo, directory):
-    """Fetches the files that load() reads for the DiT folder `directory` of `repo`."""
-    for source, name in _files(repo, directory):
-        hf_hub_download(source, name)
+def download(repo, revision, directory):
+    """Fetches the files that load() reads for the DiT folder `directory` of `repo` at `revision`."""
+    for file in _files(repo, revision, directory):
+        hub.file(*file)
 
 
 def _state(path, prefix):
@@ -44,11 +46,11 @@ def _extract(grid_logits, **kwargs):
     return [(vertices.astype(np.float32), np.ascontiguousarray(faces))]
 
 
-def load(repo, directory):
-    """Returns the Hunyuan3DDiTFlowMatchingPipeline of the DiT folder `directory` of `repo` with the turbo VAE (FlashVDM
-    decoder, marching cubes). The DiT, its image encoder and the VAE are built without weights and loaded onto the GPU
-    in fp16; the DiT file's own VAE and the VAE's encoder are not loaded."""
-    dit_config, dit_weights, vae_config, vae_weights = [hf_hub_download(*file) for file in _files(repo, directory)]
+def load(repo, revision, directory):
+    """Returns the Hunyuan3DDiTFlowMatchingPipeline of the DiT folder `directory` of `repo` at `revision` with the turbo
+    VAE (FlashVDM decoder, marching cubes). The DiT, its image encoder and the VAE are built without weights and loaded
+    onto the GPU in fp16; the DiT file's own VAE and the VAE's encoder are not loaded."""
+    dit_config, dit_weights, vae_config, vae_weights = [hub.file(*file) for file in _files(repo, revision, directory)]
     with open(dit_config, encoding="utf-8") as file:
         config = yaml.safe_load(file)
     with open(vae_config, encoding="utf-8") as file:

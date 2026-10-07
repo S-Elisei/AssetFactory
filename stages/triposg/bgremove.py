@@ -4,17 +4,18 @@ the checkpoint file; `run` copies them to the GPU for its duration. `load`, `loa
 use the Worker context."""
 from pathlib import Path
 
+import hub
 import mapped
 import numpy as np
 import torch
 from accelerate import init_empty_weights
 from context import InputError
-from huggingface_hub import snapshot_download
 from PIL import Image
 from torchvision import transforms
 from transformers import AutoConfig, AutoModelForImageSegmentation
 
 REPO = "ZhengPeng7/BiRefNet"
+REVISION = "e2bf8e4460fc8fa32bba5ea4d94b3233d367b0e4"
 KEEP_LOADED = True
 # System RAM in GB that the Worker needs to start for this stage. Guessed.
 RAM_GB = 3.0
@@ -34,16 +35,16 @@ PREPARE = transforms.Compose([
 
 
 def download():
-    snapshot_download(REPO, allow_patterns=FILES)
+    hub.snapshot(REPO, REVISION, FILES)
 
 
 def load():
     """Returns BiRefNet in fp16, built without weights, its parameters and buffers pointing to memory maps of the
     checkpoint file."""
-    config = AutoConfig.from_pretrained(REPO, trust_remote_code=True)
+    snapshot = Path(hub.snapshot(REPO, REVISION, FILES))
+    config = AutoConfig.from_pretrained(snapshot, trust_remote_code=True)
     with init_empty_weights():
         model = AutoModelForImageSegmentation.from_config(config, trust_remote_code=True)
-    snapshot = Path(snapshot_download(REPO, allow_patterns=FILES))
     mapped.attach(model, mapped.map_tensors([snapshot / "model.safetensors"]))
     return model.eval()
 

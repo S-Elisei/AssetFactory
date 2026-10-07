@@ -11,6 +11,7 @@ os.environ["PKUSEG_HOME"] = str(PKUSEG)
 from pathlib import Path
 
 import audio_common as common
+import hub
 import soundfile
 import torch
 from accelerate import init_empty_weights
@@ -21,10 +22,10 @@ from chatterbox.models.t3.modules.t3_config import T3Config
 from chatterbox.models.tokenizers import MTLTokenizer
 from chatterbox.models.voice_encoder import VoiceEncoder
 from chatterbox.mtl_tts import ChatterboxMultilingualTTS, Conditionals
-from huggingface_hub import hf_hub_download, snapshot_download
 from safetensors import safe_open
 
 REPO = "ResembleAI/chatterbox"
+REVISION = "5bb1f6ee58e50c3b8d408bc82a6d3740c2db6e18"
 KEEP_LOADED = False
 # System RAM in GB that the Worker needs to start for this stage. Guessed.
 RAM_GB = 3.5
@@ -39,13 +40,16 @@ MAX_TOKENS = 1000
 
 
 def download():
-    """Fetches the V3 checkpoint files, the Cangjie table in the cache folder that the tokenizer reads it from, and the
-    segmenter model."""
+    """Fetches the V3 checkpoint files, the Cangjie table at REVISION in the cache folder that the tokenizer reads it
+    from, with the folder's `main` ref set to REVISION, and the segmenter model."""
     from spacy_pkuseg.config import config
     from spacy_pkuseg.download import download_model
 
-    snapshot = snapshot_download(REPO, allow_patterns=FILES)
-    hf_hub_download(REPO, "Cangjie5_TC.json", cache_dir=snapshot)
+    snapshot = Path(hub.snapshot(REPO, REVISION, FILES))
+    hub.file(REPO, REVISION, "Cangjie5_TC.json", cache_dir=snapshot)
+    ref = snapshot / "models--ResembleAI--chatterbox" / "refs" / "main"
+    ref.parent.mkdir(exist_ok=True)
+    ref.write_text(REVISION)
     download_model(config.model_urls[SEGMENTER], config.pkuseg_home, config.model_hash[SEGMENTER])
 
 
@@ -59,7 +63,7 @@ def _fill(module, state):
 def load():
     """Returns {"model": the ChatterboxMultilingualTTS, "builtin": the Conditionals of the built-in voice}. The three
     networks are built without weights and take their tensors from the files straight onto the GPU, in fp32."""
-    snapshot = Path(snapshot_download(REPO, allow_patterns=FILES))
+    snapshot = Path(hub.snapshot(REPO, REVISION, FILES))
     with init_empty_weights():
         voice_encoder, t3, s3gen = VoiceEncoder(), T3(T3Config.multilingual()), S3Gen()
     voice_encoder = _fill(voice_encoder, torch.load(snapshot / "ve.pt", map_location=DEVICE, mmap=True,

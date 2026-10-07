@@ -1,13 +1,14 @@
 """Stage flux2: one image from black-forest-labs/FLUX.2-klein-4B, from a prompt (`reference_images` empty) or from a
 prompt and reference image paths to edit or combine."""
 import diffusers_common as common
+import hub
 import torch
 from context import InputError
 from diffusers import AutoencoderKLFlux2, Flux2KleinPipeline, Flux2Transformer2DModel
-from huggingface_hub import snapshot_download
 from PIL import Image
 
 REPO = "black-forest-labs/FLUX.2-klein-4B"
+REVISION = "e7b7dc27f91deacad38e78976d1f2b499d76a294"
 KEEP_LOADED = False
 # System RAM in GB that the Worker needs to start for this stage. Guessed.
 RAM_GB = 10.4
@@ -17,12 +18,12 @@ FILES = ["model_index.json", "scheduler/*", "text_encoder/*", "tokenizer/*", "tr
 
 
 def download():
-    snapshot_download(REPO, allow_patterns=FILES)
+    hub.snapshot(REPO, REVISION, FILES)
 
 
 def load():
     """Returns {"pipeline": pipeline, "groups": transformer groups, "prompt_cache": dict}."""
-    snapshot = snapshot_download(REPO, allow_patterns=FILES)
+    snapshot = hub.snapshot(REPO, REVISION, FILES)
     text_encoder = common.load_text_encoder(snapshot, max(TEXT_ENCODER_OUT_LAYERS) + 1)
     transformer = Flux2Transformer2DModel.from_pretrained(snapshot, subfolder="transformer", dtype=torch.bfloat16)
     groups = common.stream_transformer(transformer)

@@ -1,5 +1,6 @@
 # Usage: build.ps1. Run after install.ps1 triposg. Checks out TripoSG at its pinned commit into envs\triposg\src with
-# triposg.patch applied, builds the diso (DiffDMC) CUDA extension with MSVC 2022 and CUDA 12.6, and makes the triposg
+# triposg.patch applied, builds the diso (DiffDMC) CUDA extension with MSVC 2022 and CUDA 12.6 when it does not import,
+# and makes the triposg
 # package importable. Idempotent.
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "..\build_tools.ps1")
@@ -19,10 +20,16 @@ Sync-PinnedRepo "https://github.com/huanngzh/MV-Adapter.git" "4277e0018232bac82b
 Invoke-Checked { git -C $MvAdapter checkout -q --force HEAD }
 Invoke-Checked { git -C $MvAdapter apply --whitespace=nowarn (Join-Path $PSScriptRoot "mv-adapter.patch") }
 
-Install-BuildTools $Py
-Enter-CudaBuildEnv
-Invoke-Checked { uv pip install --python $Py --no-build-isolation --no-cache diso==0.1.4 }
-Invoke-Checked { uv pip install --python $Py --no-build-isolation --no-cache "nvdiffrast @ git+https://github.com/NVlabs/nvdiffrast.git@253ac4fcea7de5f396371124af597e6cc957bfae" }
+$HasDiso = Test-Python $Py "import torch, diso"
+$HasNvdiffrast = Test-Python $Py "import torch, nvdiffrast.torch"
+if (-not ($HasDiso -and $HasNvdiffrast)) {
+    Install-BuildTools $Py
+    Enter-CudaBuildEnv
+}
+if (-not $HasDiso) { Invoke-Checked { uv pip install --python $Py --no-build-isolation --no-cache diso==0.1.4 } }
+if (-not $HasNvdiffrast) {
+    Invoke-Checked { uv pip install --python $Py --no-build-isolation --no-cache "nvdiffrast @ git+https://github.com/NVlabs/nvdiffrast.git@253ac4fcea7de5f396371124af597e6cc957bfae" }
+}
 
 Add-SourcePath $Py "af_triposg_src" @($Src)
 Invoke-Checked { & $Py -c "import diso; from triposg.pipelines.pipeline_triposg import TripoSGPipeline" }

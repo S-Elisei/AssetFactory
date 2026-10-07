@@ -5,15 +5,16 @@ import shutil
 from pathlib import Path
 
 import diffusers_common as common
+import hub
 import mapped
 import torch
 from context import MODELS, InputError
 from diffusers import AutoencoderKL, ZImageImg2ImgPipeline, ZImagePipeline, ZImageTransformer2DModel
-from huggingface_hub import snapshot_download
 from PIL import Image
 from safetensors import safe_open
 
 REPO = "Tongyi-MAI/Z-Image-Turbo"
+REVISION = "f332072aa78be7aecdf3ee76d5c247082da564a6"
 KEEP_LOADED = False
 # System RAM in GB that the Worker needs to start for this stage. Guessed.
 RAM_GB = 14.2
@@ -27,7 +28,7 @@ MAX_SIDE = 2048
 
 def download():
     """Fetches the checkpoint and writes BF16_TRANSFORMER; shards already converted are kept."""
-    source = Path(snapshot_download(REPO, allow_patterns=FILES)) / "transformer"
+    source = Path(hub.snapshot(REPO, REVISION, FILES)) / "transformer"
     BF16_TRANSFORMER.mkdir(parents=True, exist_ok=True)
     for shard in sorted(source.glob("*.safetensors")):
         target = BF16_TRANSFORMER / shard.name
@@ -42,7 +43,7 @@ def download():
 def load():
     """Returns {"text_to_image": pipeline, "image_to_image": pipeline, "groups": transformer groups, "prompt_cache":
     dict}; both pipelines share one set of components."""
-    snapshot = snapshot_download(REPO, allow_patterns=FILES)
+    snapshot = hub.snapshot(REPO, REVISION, FILES)
     text_encoder = common.load_text_encoder(snapshot)
     transformer = ZImageTransformer2DModel.from_pretrained(BF16_TRANSFORMER, dtype=torch.bfloat16)
     groups = common.stream_transformer(transformer)

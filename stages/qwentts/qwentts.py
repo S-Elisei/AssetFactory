@@ -3,12 +3,12 @@ as `speech.wav` (16-bit PCM mono at the speech tokenizer's sample rate)."""
 from pathlib import Path
 
 import audio_common as common
+import hub
 import mapped
 import soundfile
 import torch
 from accelerate import init_empty_weights
 from context import MODELS
-from huggingface_hub import snapshot_download
 from qwen_tts import Qwen3TTSModel, Qwen3TTSTokenizer
 from qwen_tts.core import Qwen3TTSTokenizerV2Config, Qwen3TTSTokenizerV2Model
 from qwen_tts.core.models import Qwen3TTSConfig, Qwen3TTSForConditionalGeneration, Qwen3TTSProcessor
@@ -34,7 +34,7 @@ LANGUAGES = {"auto": "auto", "zh": "chinese", "en": "english", "ja": "japanese",
 
 def download():
     """Fetches the checkpoint files and writes DECODER_WEIGHTS; an existing DECODER_WEIGHTS is kept."""
-    snapshot = Path(snapshot_download(REPO, revision=REVISION, allow_patterns=FILES))
+    snapshot = Path(hub.snapshot(REPO, REVISION, FILES))
     if not DECODER_WEIGHTS.exists():
         DECODER_WEIGHTS.parent.mkdir(parents=True, exist_ok=True)
         with safe_open(snapshot / "speech_tokenizer" / "model.safetensors", "pt") as file:
@@ -53,7 +53,7 @@ def _fill(module, path):
 def load():
     """Returns the Qwen3TTSModel. The talker and the speech decoder are built without weights and take their tensors from
     the files straight onto the GPU, in bf16; the speech tokenizer's encoder is not built."""
-    snapshot = Path(snapshot_download(REPO, revision=REVISION, allow_patterns=FILES))
+    snapshot = Path(hub.snapshot(REPO, REVISION, FILES))
     config = Qwen3TTSConfig.from_pretrained(snapshot)
     with init_empty_weights():
         talker = Qwen3TTSForConditionalGeneration._from_config(config, dtype=DTYPE, attn_implementation="sdpa")

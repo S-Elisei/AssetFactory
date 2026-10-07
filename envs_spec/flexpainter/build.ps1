@@ -1,7 +1,7 @@
 # Usage: build.ps1. Run after install.ps1 flexpainter. Checks out FlexPainter, torchsparse (with torchsparse.patch applied)
 # and sparsehash-c11 at their pinned commits into envs\flexpainter\src\FlexPainter, envs\flexpainter\src\torchsparse and
 # envs\flexpainter\src\sparsehash-c11; a checkout already at its commit is used as it is. Builds torchsparse, torch-scatter
-# and nvdiffrast with MSVC 2022 and CUDA 12.6 (an installed torch-scatter and nvdiffrast are kept), installs the flash_attn
+# and nvdiffrast with MSVC 2022 and CUDA 12.6 when they do not import, installs the flash_attn
 # shim (flash_attn.py) into the environment and makes the FlexPainter packages importable. Idempotent.
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "..\build_tools.ps1")
@@ -25,14 +25,24 @@ foreach ($Name in "dense_hash_map", "dense_hash_set", "sparse_hash_map", "sparse
     [IO.File]::WriteAllText((Join-Path $Shim $Name), "#include <sparsehash/$Name>`n")
 }
 
-Install-BuildTools $Py
-Enter-CudaBuildEnv
-$env:FORCE_CUDA = "1"
-$env:MAX_JOBS = $env:NUMBER_OF_PROCESSORS
-$env:INCLUDE = "$(Split-Path $Shim);$SparseHash;$env:INCLUDE"
-Remove-Item -Recurse -Force -ErrorAction SilentlyContinue (Join-Path $TorchSparse "build")
-Invoke-Checked { uv pip install --python $Py --no-build-isolation --no-cache --reinstall-package torchsparse $TorchSparse }
-Invoke-Checked { uv pip install --python $Py --no-build-isolation --no-cache torch-scatter==2.1.2 "nvdiffrast @ git+https://github.com/NVlabs/nvdiffrast.git@253ac4fcea7de5f396371124af597e6cc957bfae" }
+$HasTorchSparse = Test-Python $Py "import torch, torchsparse"
+$HasScatter = Test-Python $Py "import torch, torch_scatter"
+$HasNvdiffrast = Test-Python $Py "import torch, nvdiffrast.torch"
+if (-not ($HasTorchSparse -and $HasScatter -and $HasNvdiffrast)) {
+    Install-BuildTools $Py
+    Enter-CudaBuildEnv
+    $env:FORCE_CUDA = "1"
+    $env:MAX_JOBS = $env:NUMBER_OF_PROCESSORS
+    $env:INCLUDE = "$(Split-Path $Shim);$SparseHash;$env:INCLUDE"
+}
+if (-not $HasTorchSparse) {
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue (Join-Path $TorchSparse "build")
+    Invoke-Checked { uv pip install --python $Py --no-build-isolation --no-cache --reinstall-package torchsparse $TorchSparse }
+}
+if (-not $HasScatter) { Invoke-Checked { uv pip install --python $Py --no-build-isolation --no-cache torch-scatter==2.1.2 } }
+if (-not $HasNvdiffrast) {
+    Invoke-Checked { uv pip install --python $Py --no-build-isolation --no-cache "nvdiffrast @ git+https://github.com/NVlabs/nvdiffrast.git@253ac4fcea7de5f396371124af597e6cc957bfae" }
+}
 
 $Site = (& $Py -c "import sysconfig; print(sysconfig.get_paths()['purelib'])").Trim()
 Copy-Item -Force (Join-Path $PSScriptRoot "flash_attn.py") $Site

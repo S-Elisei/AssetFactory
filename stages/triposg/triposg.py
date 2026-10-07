@@ -6,13 +6,13 @@ import shutil
 from pathlib import Path
 
 import cv2
+import hub
 import mapped
 import numpy as np
 import torch
 import trimesh
 from accelerate import init_empty_weights
 from context import MODELS
-from huggingface_hub import snapshot_download
 from PIL import Image
 from safetensors import safe_open
 from safetensors.torch import load_file
@@ -23,6 +23,7 @@ from triposg.pipelines.pipeline_triposg import TripoSGPipeline
 from triposg.schedulers import RectifiedFlowScheduler
 
 REPO = "VAST-AI/TripoSG"
+REVISION = "2c1c516d22d58db486a058d98d31bb6177344e06"
 KEEP_LOADED = False
 # System RAM in GB that the Worker needs to start for this stage. Guessed.
 RAM_GB = 3.5
@@ -48,7 +49,7 @@ PADDING_RATIO = 0.1
 
 def download():
     """Fetches the checkpoint and writes FP16; components already converted are kept."""
-    snapshot = Path(snapshot_download(REPO, allow_patterns=FILES))
+    snapshot = Path(hub.snapshot(REPO, REVISION, FILES))
     for name, weights in WEIGHTS.items():
         target = FP16 / name
         target.mkdir(parents=True, exist_ok=True)
@@ -72,7 +73,7 @@ def _load(name, factory):
 
 def load():
     """Returns {"pipeline": pipeline, "decode": the VAE's own decode method}."""
-    snapshot = snapshot_download(REPO, allow_patterns=FILES)
+    snapshot = hub.snapshot(REPO, REVISION, FILES)
     pipeline = TripoSGPipeline(
         vae=_load("vae", lambda: TripoSGVAEModel.from_config(TripoSGVAEModel.load_config(FP16 / "vae"))),
         transformer=_load("transformer", lambda: TripoSGDiTModel.from_config(

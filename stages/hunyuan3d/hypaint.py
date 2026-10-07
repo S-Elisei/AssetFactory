@@ -15,6 +15,7 @@ from functools import partial
 from pathlib import Path
 
 import cv2
+import hub
 import mapped
 import meshops
 import numpy as np
@@ -25,7 +26,6 @@ from accelerate import init_empty_weights
 from context import MODELS
 from diffusers import (AutoencoderKL, DDIMScheduler, EulerAncestralDiscreteScheduler, LCMScheduler,
                        StableDiffusionInstructPix2PixPipeline, UNet2DConditionModel)
-from huggingface_hub import snapshot_download
 from hy3dgen.texgen.differentiable_renderer.mesh_render import MeshRender
 from hy3dgen.texgen.hunyuanpaint.pipeline import HunyuanPaintPipeline
 from hy3dgen.texgen.hunyuanpaint.unet.modules import UNet2p5DConditionModel
@@ -35,6 +35,7 @@ from safetensors import safe_open
 from transformers import CLIPTextConfig, CLIPTextModel, CLIPTokenizer
 
 REPO = "tencent/Hunyuan3D-2"
+REVISION = "9cd649ba6913f7a852e3286bad86bfa9a2d83dcf"
 KEEP_LOADED = False
 # System RAM in GB that the Worker needs to start for this stage. Guessed.
 RAM_GB = 4.5
@@ -42,7 +43,7 @@ DELIGHT = "hunyuan3d-delight-v2-0"
 PAINT = "hunyuan3d-paint-v2-0-turbo"
 # The files `load` reads from the checkpoint snapshot, and the files `download` converts.
 FILES = [f"{DELIGHT}/{part}/*" for part in ("scheduler", "tokenizer", "text_encoder", "unet", "vae")] + [
-    f"{PAINT}/{part}/*" for part in ("scheduler", "unet", "vae")]
+    f"{PAINT}/scheduler/*", f"{PAINT}/unet/config.json", f"{PAINT}/unet/diffusion_pytorch_model.bin", f"{PAINT}/vae/*"]
 # Folder that download() writes and load() reads: the weight files of the checkpoint that are not stored in fp16, each
 # converted to fp16 as `<key>.safetensors`.
 FP16 = MODELS / "hypaint"
@@ -89,7 +90,7 @@ def _fp16_state(path):
 def download():
     """Fetches the checkpoint files and writes FP16; files already converted are kept. The attention parameters of the
     paint VAE are renamed to the names its model uses."""
-    snapshot = Path(snapshot_download(REPO, allow_patterns=FILES))
+    snapshot = Path(hub.snapshot(REPO, REVISION, FILES))
     FP16.mkdir(parents=True, exist_ok=True)
     for key, source in TO_FP16.items():
         target = FP16 / f"{key}.safetensors"
@@ -113,7 +114,7 @@ def _mapped(factory, weights):
 def load():
     """Returns {"delight": the InstructPix2Pix pipeline, "multiview": the Hunyuan3D-Paint pipeline in turbo mode}; every
     model's parameters point to memory maps of its weights, in fp16."""
-    snapshot = Path(snapshot_download(REPO, allow_patterns=FILES))
+    snapshot = Path(hub.snapshot(REPO, REVISION, FILES))
     delight_directory, paint_directory = snapshot / DELIGHT, snapshot / PAINT
     text_encoder = _mapped(lambda: CLIPTextModel(CLIPTextConfig.from_pretrained(delight_directory / "text_encoder")),
                            delight_directory / "text_encoder" / "model.safetensors")

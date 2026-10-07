@@ -14,6 +14,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import audio_common as common
+import hub
 import mapped
 import soundfile
 import torch
@@ -26,10 +27,10 @@ from acestep.models.common.configuration_acestep_v15 import AceStepConfig
 from acestep.models.turbo.modeling_acestep_v15_turbo import AceStepConditionGenerationModel
 from context import MODELS, InputError
 from diffusers import AutoencoderOobleck
-from huggingface_hub import snapshot_download
 from transformers import AutoConfig, AutoModel, AutoModelForCausalLM, AutoTokenizer
 
 REPO = "ACE-Step/Ace-Step1.5"
+REVISION = "19671f406d603126926c1b7e2adc169acbcade22"
 KEEP_LOADED = False
 # System RAM in GB that the Worker needs to start for this stage. Guessed.
 RAM_GB = 5.0
@@ -50,7 +51,7 @@ DIFFUSION_START, DIFFUSION_END = 0.52, 0.79
 
 
 def download():
-    snapshot_download(REPO, local_dir=CHECKPOINTS, allow_patterns=FILES)
+    hub.snapshot(REPO, REVISION, FILES, local_dir=CHECKPOINTS)
 
 
 def _attach(model, tensors):

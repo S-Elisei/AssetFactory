@@ -14,6 +14,7 @@ import json
 import urllib.request
 from pathlib import Path
 
+import hub
 import mapped
 import meshops
 import mvadapter_common as common
@@ -22,7 +23,6 @@ import torch
 from accelerate import init_empty_weights
 from context import MODELS
 from diffusers import AutoencoderKL, EulerDiscreteScheduler, StableDiffusionXLPipeline, UNet2DConditionModel
-from huggingface_hub import hf_hub_download, snapshot_download
 from mvadapter.models.attention_processor import DecoupledMVRowColSelfAttnProcessor2_0
 from mvadapter.pipelines.pipeline_mvadapter_i2mv_sdxl import MVAdapterI2MVSDXLPipeline
 from mvadapter.schedulers.scheduling_shift_snr import ShiftSNRScheduler
@@ -37,6 +37,7 @@ KEEP_LOADED = False
 # System RAM in GB that the Worker needs to start for this stage. Guessed.
 RAM_GB = 4.5
 SDXL_REPO = "stabilityai/stable-diffusion-xl-base-1.0"
+SDXL_REVISION = "462165984030d82259a11f4367a4eed129e94a7b"
 SDXL_FILES = ["scheduler/*", "tokenizer/*", "tokenizer_2/*", "text_encoder/config.json",
               "text_encoder/model.fp16.safetensors", "text_encoder_2/config.json",
               "text_encoder_2/model.fp16.safetensors", "unet/config.json",
@@ -44,9 +45,11 @@ SDXL_FILES = ["scheduler/*", "tokenizer/*", "tokenizer_2/*", "text_encoder/confi
 TEXT_WEIGHTS = "model.fp16.safetensors"
 UNET_FILE = "unet/diffusion_pytorch_model.fp16.safetensors"
 VAE_REPO = "madebyollin/sdxl-vae-fp16-fix"
+VAE_REVISION = "207b116dae70ace3637169f1ddd2434b91b3a8cd"
 VAE_FILE = "diffusion_pytorch_model.safetensors"
 VAE_FILES = ["config.json", VAE_FILE]
 ADAPTER_REPO = "huanngzh/mv-adapter"
+ADAPTER_REVISION = "6de4033df6b53366f3c009d22f5ec434bb55e59f"
 ADAPTER_FILE = "mvadapter_ig2mv_sdxl.safetensors"
 UPSCALER_URL = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/RealESRGAN_x2plus.pth"
 # Folder that download() writes and load() reads: the VAE in fp16, the UNet with the merged adapter and the condition
@@ -127,9 +130,9 @@ def _prompt_embeddings(sdxl):
 def download():
     """Fetches the checkpoints and writes the files `load` reads; files already written are kept. The UNet file holds
     the SDXL UNet with the adapter merged in, the layers that layerwise casting converts stored in float8."""
-    sdxl = Path(snapshot_download(SDXL_REPO, allow_patterns=SDXL_FILES))
-    vae = Path(snapshot_download(VAE_REPO, allow_patterns=VAE_FILES))
-    adapter = hf_hub_download(ADAPTER_REPO, ADAPTER_FILE)
+    sdxl = Path(hub.snapshot(SDXL_REPO, SDXL_REVISION, SDXL_FILES))
+    vae = Path(hub.snapshot(VAE_REPO, VAE_REVISION, VAE_FILES))
+    adapter = hub.file(ADAPTER_REPO, ADAPTER_REVISION, ADAPTER_FILE)
     FOLDER.mkdir(parents=True, exist_ok=True)
     if not UPSCALER.exists():
         partial = UPSCALER.with_name(UPSCALER.name + ".part")
@@ -157,8 +160,8 @@ def load():
     """Returns {"pipeline": the MV-Adapter SDXL pipeline without text encoders, "embeddings": the prompt embeddings
     (memory maps), "upscaler": the RealESRGAN model in fp16 on the CPU}. The parameters of the pipeline's models point
     to memory maps of their weights; the UNet's layers are stored in float8 and compute in fp16."""
-    pipeline = _pipeline(Path(snapshot_download(SDXL_REPO, allow_patterns=SDXL_FILES)),
-                         Path(snapshot_download(VAE_REPO, allow_patterns=VAE_FILES)))
+    pipeline = _pipeline(Path(hub.snapshot(SDXL_REPO, SDXL_REVISION, SDXL_FILES)),
+                         Path(hub.snapshot(VAE_REPO, VAE_REVISION, VAE_FILES)))
     for model, weights in ((pipeline.vae, VAE_WEIGHTS), (pipeline.unet, UNET_WEIGHTS),
                            (pipeline.cond_encoder, ENCODER_WEIGHTS)):
         mapped.attach(model, mapped.map_tensors([weights]))

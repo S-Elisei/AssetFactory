@@ -22,6 +22,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import cv2
+import hub
 import mapped
 import meshops
 import numpy as np
@@ -29,7 +30,6 @@ import torch
 import torch.nn.functional as F
 from accelerate import init_empty_weights
 from context import MODELS
-from huggingface_hub import hf_hub_download, snapshot_download
 from model.clip import ClipTokenizer
 from model.outpainter_net import OutpainterNet
 from open_clip.model import _build_vision_tower
@@ -43,10 +43,13 @@ KEEP_LOADED = False
 # System RAM in GB that the Worker needs to start for this stage. Guessed.
 RAM_GB = 4.0
 REPO = "StarYDY/FlexPainter"
+REVISION = "f193f5264abdcff2630ae334fb5da3961d00a3b1"
 CHECKPOINT = "outpainter/texgen_v1.ckpt"
 OPEN_CLIP_REPO = "laion/CLIP-ViT-H-14-laion2B-s32B-b79K"
+OPEN_CLIP_REVISION = "1c2b8495b28150b8a4922ee1c8edee224c284c0c"
 OPEN_CLIP_FILES = ["open_clip_config.json", "open_clip_model.safetensors"]
 ENCODER_REPO = "lambdalabs/sd-image-variations-diffusers"
+ENCODER_REVISION = "42bc0ee1726b141d49f519a6ea02ccfbf073db2e"
 ENCODER_FILES = ["image_encoder/config.json", "image_encoder/pytorch_model.bin",
                  "feature_extractor/preprocessor_config.json"]
 # Folder that download() writes and load() reads: the EMA weights of the outpainter in fp32 and the weights of the CLIP
@@ -96,9 +99,9 @@ def _encoder(directory):
 def download():
     """Fetches the checkpoints and writes the files `load` reads; files already written are kept. The outpainter file
     holds the EMA weights under the network's parameter names."""
-    checkpoint = hf_hub_download(REPO, CHECKPOINT)
-    snapshot_download(OPEN_CLIP_REPO, allow_patterns=OPEN_CLIP_FILES)
-    encoder = Path(snapshot_download(ENCODER_REPO, allow_patterns=ENCODER_FILES))
+    checkpoint = hub.file(REPO, REVISION, CHECKPOINT)
+    hub.snapshot(OPEN_CLIP_REPO, OPEN_CLIP_REVISION, OPEN_CLIP_FILES)
+    encoder = Path(hub.snapshot(ENCODER_REPO, ENCODER_REVISION, ENCODER_FILES))
     FOLDER.mkdir(parents=True, exist_ok=True)
     if not OUTPAINTER_WEIGHTS.exists():
         state = torch.load(checkpoint, map_location="cpu", mmap=True, weights_only=True)["state_dict"]
@@ -138,8 +141,8 @@ class _Clip:
 def load():
     """Returns {"outpainter": the outpainter network, "clip": the _Clip embedder}. The parameters of the outpainter,
     of the CLIP image encoder (bf16) and of the OpenCLIP image tower point to memory maps of their weights."""
-    encoder_directory = Path(snapshot_download(ENCODER_REPO, allow_patterns=ENCODER_FILES))
-    open_clip_directory = Path(snapshot_download(OPEN_CLIP_REPO, allow_patterns=OPEN_CLIP_FILES))
+    encoder_directory = Path(hub.snapshot(ENCODER_REPO, ENCODER_REVISION, ENCODER_FILES))
+    open_clip_directory = Path(hub.snapshot(OPEN_CLIP_REPO, OPEN_CLIP_REVISION, OPEN_CLIP_FILES))
     config = json.loads((open_clip_directory / "open_clip_config.json").read_text(encoding="utf-8"))
     with init_empty_weights():
         outpainter = OutpainterNet(OUTPAINTER)
