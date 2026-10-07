@@ -1,11 +1,13 @@
-"""Stage hypaint: textures a UV-mapped mesh from one RGBA reference image with Hunyuan3D-Paint v2.0 turbo and writes it
-as `mesh.glb`. The input mesh's vertices, faces and UVs are kept; its materials, textures, vertex colors and skin are
-dropped. Steps in order: the image is cropped to its object and centered on a square canvas; with `delight` it passes
-through the delight diffusion model (InstructPix2Pix), otherwise it is composited on white; a multiview diffusion model
-generates six views of the object from the reference image and from normal and position renders of the mesh; the views
-are back-projected into the mesh's UV layout and the texels no view covers are inpainted; with a `normal_source` a
-tangent-space normal map is baked from its surface onto the mesh's UV layout, on the texel grid that custom_rasterizer
-returns. The reference image is the view from +Z (Y up).
+"""Stage hypaint: textures a UV-mapped mesh from one RGBA reference image with Hunyuan3D-Paint v2.0 turbo. It writes the
+base-color texture as `base_color.png` and, with a `normal_source`, the normal map as `normal_map.png`, and no mesh.
+Both are size x size RGB images on the input mesh's own UV layout: image row 0 is at v = 1 of the UVs that
+`meshops.load_glb` returns (v pointing up), the last row at v = 0, and columns run in increasing u. Steps in order: the
+image is cropped to its object and centered on a square canvas; with `delight` it passes through the delight diffusion
+model (InstructPix2Pix), otherwise it is composited on white; a multiview diffusion model generates six views of the
+object from the reference image and from normal and position renders of the mesh; the views are back-projected into
+the mesh's UV layout and the texels no view covers are inpainted; with a `normal_source` a tangent-space normal map is
+baked from its surface onto the mesh's UV layout, on the texel grid that custom_rasterizer returns. The reference
+image is the view from +Z (Y up).
 
 The weights of every model stay in memory maps of safetensors files; `run` copies the weights of a model to the GPU for
 the time that model runs. `load` and `download` do not use the Worker context."""
@@ -370,17 +372,17 @@ def run(ctx, mesh, image, normal_source, texture_resolution, delight):
     del render
     ctx.check_cancel()
 
-    vertex_normals = meshops.welded_normals(vertices, faces)
-    normal_map = None
+    normal_map_path = None
     if normal_source is not None:
         ctx.progress(0.92, "baking the normal map")
         source_vertices, source_faces, _ = meshops.load_glb(normal_source)
-        normal_map = Image.fromarray(_normal_map(vertices, faces, uv, vertex_normals, source_vertices, source_faces,
-                                                 texture_resolution))
+        normal_map = _normal_map(vertices, faces, uv, meshops.welded_normals(vertices, faces), source_vertices,
+                                 source_faces, texture_resolution)
+        normal_map_path = ctx.dir / "normal_map.png"
+        Image.fromarray(normal_map).save(normal_map_path)
         ctx.check_cancel()
 
     torch.cuda.empty_cache()
-    ctx.progress(0.97, "writing")
-    path = ctx.dir / "mesh.glb"
-    meshops.write_glb(path, vertices, faces, vertex_normals, uv, Image.fromarray(base_color), normal_map)
-    return {"mesh": str(path), "vertices": len(vertices), "faces": len(faces), "texture_size": texture_resolution}
+    base_color_path = ctx.dir / "base_color.png"
+    Image.fromarray(base_color).save(base_color_path)
+    return {"base_color": str(base_color_path), "normal_map": None if normal_map_path is None else str(normal_map_path)}

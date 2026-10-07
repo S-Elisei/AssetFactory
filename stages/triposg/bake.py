@@ -1,13 +1,21 @@
 """Stage bake: projects the images of orthographic views of a mesh into the mesh's own UV layout with MV-Adapter's
 camera projection (nvdiffrast): each texel takes the color of the views that see it, weighted by the cosine between the
 surface normal and the view direction raised to PROJECTION_ALPHA, and views that see it at a grazing angle or across a
-depth edge do not count. Writes the projected color atlas `atlas.png`, `covered.png` (texels inside a UV triangle) and
-`valid.png` (texels at least one view filled; 255 where true) as texture images: row 0 is the top of the texture
-(v = 1) and the color of a texel outside `valid.png` is black. The mesh is scaled so that its largest absolute
-coordinate is 0.5 and its vertex normals are welded across UV seams. The mesh must have non-overlapping UVs.
+depth edge do not count. The mesh is scaled so that its largest absolute coordinate is 0.5 and its vertex normals are
+welded across UV seams. The mesh must have non-overlapping UVs.
 
-The views are the image files `views`, in the order of the entries of the cameras file; their alpha channel is not read.
-All views have the same size. The cameras file is JSON of the form
+`view_sets` is a list of view sets, each a list of image files in the order of the entries of the cameras file; their
+alpha channel is not read. All views of all sets have the same size. The sets share the mesh, the cameras file and
+`texture_size`; the geometry of the projection is computed once. Returns
+
+    {"covered": path, "valid": path, "atlases": [path, ...]}
+
+`covered` is the PNG mask of the texels inside a UV triangle and `valid` the PNG mask of the texels that at least one
+view sees validly (255 where true); both are the same for all sets. `atlases` holds the RGB PNG of the projected
+colors of each set, in order. All are `texture_size` square, row 0 is the top of the texture (v = 1), and the color of a
+texel outside `valid` is black.
+
+The cameras file is JSON of the form
 
     {"cameras": [{"c2w": [[...] x 4], "left": float, "right": float, "bottom": float, "top": float}, ...]}
 
@@ -24,14 +32,13 @@ import meshops
 import mvadapter_common as common
 import numpy as np
 import torch
-from mvadapter.utils.mesh_utils import CameraProjection, get_orthogonal_projection_matrix
+from mvadapter.utils.mesh_utils import NVDiffRastContextWrapper, get_orthogonal_projection_matrix
 from mvadapter.utils.mesh_utils.camera import Camera
-from mvadapter.utils.mesh_utils.uv import uv_precompute
+from mvadapter.utils.mesh_utils.uv import (ExponentialBlend, SimpleUVValidityStrategy, uv_blend, uv_precompute,
+                                           uv_render_attr, uv_render_geometry)
 from PIL import Image
 
 DEVICE = common.DEVICE
-# Backend of the projection's Poisson solver, which this stage does not use.
-POISSON_BACKEND = "torch-native"
 # Exponent of the cosine in the blend weight of a view, minimum cosine of a view's angle to a texel's normal, depth
 # gradient (per pixel, in the units of the scaled mesh) from which a texel is rejected, and the size in pixels of the
 # max filter that spreads the rejection. Documented.
@@ -68,7 +75,7 @@ def _mask_image(mask):
     return Image.fromarray(mask.cpu().numpy().astype(np.uint8) * 255)
 
 
-def run(ctx, mesh, views, cameras, texture_size):
+def run(ctx, mesh, view_sets, cameras, texture_size):
     ctx.progress(0.0, "preparing")
     vertices, faces, uv = meshops.load_glb(mesh)
     scale = common.mesh_scale(vertices)
@@ -76,21 +83,27 @@ def run(ctx, mesh, views, cameras, texture_size):
                                     meshops.welded_normals(vertices, faces).astype(np.float32), uv, texture_size)
     entries = json.loads(Path(cameras).read_text(encoding="utf-8"))["cameras"]
     camera = _cameras(entries, vertices, scale)
-    images = torch.from_numpy(np.stack([np.asarray(Image.open(path).convert("RGB")) for path in views])).to(DEVICE)
+    context = NVDiffRastContextWrapper(DEVICE)
+    precomputed = uv_precompute(context, textured, texture_size, texture_size)
+    width, height = Image.open(view_sets[0][0]).size
+    geometry = uv_render_geometry(
+        context, textured, camera, view_height=height, view_width=width, uv_precompute_output=precomputed,
+        compute_depth_grad=True, depth_grad_dilation=DEPTH_GRADIENT_DILATION)
+    validity = SimpleUVValidityStrategy(aoi_cos_thresh=MIN_COSINE, depth_grad_thresh=DEPTH_GRADIENT)
+    covered_path, valid_path = ctx.dir / "covered.png", ctx.dir / "valid.png"
+    _mask_image(precomputed.uv_mask).save(covered_path)
+    _mask_image(validity(precomputed, geometry, None).any(dim=0)).save(valid_path)
     ctx.check_cancel()
 
-    ctx.progress(0.1, "projecting the views")
-    projection = CameraProjection(POISSON_BACKEND, None, DEVICE)
-    result = projection(
-        images.float() / 255, textured, camera, uv_size=texture_size, aoi_cos_valid_threshold=MIN_COSINE,
-        depth_grad_dilation=DEPTH_GRADIENT_DILATION, depth_grad_threshold=DEPTH_GRADIENT,
-        uv_exp_blend_alpha=PROJECTION_ALPHA, poisson_blending=False, from_scratch=True, uv_padding=False,
-        return_dict=True)
-    covered = uv_precompute(projection.ctx, textured, texture_size, texture_size).uv_mask
-
-    ctx.progress(0.9, "writing")
-    paths = {name: ctx.dir / f"{name}.png" for name in ("atlas", "covered", "valid")}
-    Image.fromarray((result.uv_proj.clamp(0, 1) * 255).round().byte().cpu().numpy()).save(paths["atlas"])
-    _mask_image(covered).save(paths["covered"])
-    _mask_image(result.uv_proj_mask).save(paths["valid"])
-    return {name: str(path) for name, path in paths.items()}
+    atlases = []
+    for number, views in enumerate(view_sets):
+        ctx.progress(0.1 + 0.9 * number / len(view_sets), f"projecting view set {number + 1}/{len(view_sets)}")
+        images = torch.from_numpy(np.stack([np.asarray(Image.open(path).convert("RGB")) for path in views]))
+        blended = uv_blend(
+            precomputed, geometry, uv_render_attr(images.to(DEVICE).float() / 255, geometry),
+            uv_validity_strategy=validity, uv_blend_weight_strategy=ExponentialBlend(alpha=PROJECTION_ALPHA),
+            do_uv_padding=False, poisson_blending=False)
+        atlases.append(ctx.dir / f"atlas_{number}.png")
+        Image.fromarray((blended.uv_attr_blend.clamp(0, 1) * 255).round().byte().cpu().numpy()).save(atlases[-1])
+        ctx.check_cancel()
+    return {"covered": str(covered_path), "valid": str(valid_path), "atlases": [str(path) for path in atlases]}

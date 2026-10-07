@@ -1,16 +1,18 @@
-"""Stage fill: completes the texels that the projection of `bake` left empty with FlexPainter's outpainter (TEXGen
-finetuned for UV texture completion at SIZE x SIZE) and writes the textured mesh as `mesh.glb`. The input mesh's
-vertices, faces and UVs are kept; its materials, textures and vertex colors are dropped; the material has the completed
-atlas as base color, metallic 0 and roughness 1.
+"""Stage fill: completes the texels that the projections of `bake` left empty with FlexPainter's outpainter (TEXGen
+finetuned for UV texture completion at SIZE x SIZE) and writes one completed atlas PNG per projection.
 
-Steps in order: the projection is reduced to SIZE (a texel is known when at least KNOWN_SHARE of the texels it covers
-are valid; its color is the mean of those); the CLIP embeddings of the views on black are averaged; the outpainter samples
-the SIZE atlas conditioned on the known texels, the embeddings and the mesh positions; every covered texel that the
-projection left empty takes the outpainter's color, bilinearly enlarged to the atlas size; the atlas grows GROW texels
-past the UV layout by repeated averaging of filled neighbors.
+`run(ctx, mesh, covered, valid, sets)`: `mesh` is the GLB with the UVs of the projections, `covered` and `valid` the
+files of the same names that `bake` returns, `sets` a list of {"atlas": path, "views": [paths]}: one entry of the
+`atlases` of `bake` and the view images of that set, RGBA files whose alpha is the silhouette of the mesh (the color is
+read on black where the alpha is 0). The atlas size is a multiple of SIZE. Returns {"atlases": [path, ...]}: the
+completed RGB atlas of each set, in order, the same size and orientation as the atlas of `bake`.
 
-The `atlas`, `covered` and `valid` files are the outputs of `bake`; the atlas size is a multiple of SIZE. The `views`
-are RGBA image files whose alpha is the silhouette of the mesh; the color is read on black where the alpha is 0.
+For each set, in order: the projection is reduced to SIZE (a texel is known when at least KNOWN_SHARE of the texels it
+covers are valid; its color is the mean of those); the CLIP embeddings of the views on black are averaged; the
+outpainter samples the SIZE atlas conditioned on the known texels, the embeddings and the mesh positions; every covered
+texel that the projection left empty takes the outpainter's color, bilinearly enlarged to the atlas size; the atlas
+grows GROW texels past the UV layout by repeated averaging of filled neighbors. The mesh positions are computed once and
+each set is sampled with the same seed.
 
 The outpainter and the CLIP models run in evaluation mode. The weights of every model stay in memory maps of safetensors
 files; `run` copies the weights of a model to the GPU for the time that model runs. `load` and `download` do not use the
@@ -34,7 +36,6 @@ from open_clip.model import _build_vision_tower
 from PIL import Image
 from pipeline.outpainter import OutpainterPipe
 from spuv.mesh_utils import vertex_transform
-from spuv.nvdiffrast_utils import rasterize_geometry_maps
 from spuv.rasterize import NVDiffRasterizerContext
 from transformers import CLIPImageProcessor, CLIPVisionConfig, CLIPVisionModelWithProjection
 
@@ -156,16 +157,18 @@ def load():
 
 
 class _Steps:
-    """The progress bar of OutpainterPipe: reports each finished sampling step and raises Cancelled when the run was
-    cancelled."""
+    """The progress bar of OutpainterPipe for the sampling of one set: reports each finished sampling step, the steps
+    taking the fractions `start` to `end` of the run, and raises Cancelled when the run was cancelled."""
 
-    def __init__(self, ctx):
-        self.ctx, self.total, self.done = ctx, 0, 0
+    def __init__(self, ctx, start, end, label):
+        self.ctx, self.start, self.end, self.label = ctx, start, end, label
+        self.total = self.done = 0
 
     def update(self, count):
         self.done += count
         self.ctx.check_cancel()
-        self.ctx.progress(0.3 + 0.55 * self.done / self.total, f"sampling step {self.done}/{self.total}")
+        self.ctx.progress(self.start + (self.end - self.start) * self.done / self.total,
+                          f"{self.label}sampling step {self.done}/{self.total}")
 
 
 def _views_on_black(paths):
@@ -177,72 +180,90 @@ def _views_on_black(paths):
     return torch.stack(views)
 
 
-def _geometry(vertices, faces, normals, uv):
+def _geometry(vertices, faces, uv):
     """Returns (position, mask): the (1, 3, SIZE, SIZE) mesh position map of the UV layout, with the mesh in
     FlexPainter's frame, and the (1, 1, SIZE, SIZE) float mask of the texels inside a UV triangle. Both have row 0 at
     v = 0."""
-    to_device = lambda array, dtype: torch.tensor(array, dtype=dtype, device=DEVICE)
-    mesh = vertex_transform({
-        "v_pos": to_device(vertices, torch.float32), "t_pos_idx": to_device(faces, torch.int32),
-        "v_norm": to_device(normals, torch.float32), "_v_tex": to_device(uv, torch.float32),
-        "_t_tex_idx": to_device(faces, torch.int32)}, mesh_scale=MESH_SCALE)
-    position, _, mask = rasterize_geometry_maps(NVDiffRasterizerContext("cuda", DEVICE), mesh, SIZE, SIZE)
-    return position.permute(0, 3, 1, 2), mask.float().permute(0, 3, 1, 2)
+    positions = vertex_transform({"v_pos": torch.tensor(vertices, dtype=torch.float32, device=DEVICE)},
+                                 mesh_scale=MESH_SCALE)["v_pos"]
+    triangles = torch.tensor(faces, dtype=torch.int32, device=DEVICE)
+    clip = torch.tensor(uv, dtype=torch.float32, device=DEVICE)[None] * 2.0 - 1.0
+    context = NVDiffRasterizerContext("cuda", DEVICE)
+    rasterized, _ = context.rasterize(
+        torch.cat((clip, torch.zeros_like(clip[..., :1]), torch.ones_like(clip[..., :1])), dim=-1), triangles,
+        (SIZE, SIZE))
+    position, _ = context.interpolate_one(positions, rasterized, triangles)
+    return position.permute(0, 3, 1, 2), (rasterized[..., 3:4] > 0).float().permute(0, 3, 1, 2)
 
 
-def run(ctx, mesh, atlas, covered, valid, views):
-    vertices, faces, uv = meshops.load_glb(mesh)
-    normals = meshops.welded_normals(vertices, faces)
-    colors = np.asarray(Image.open(atlas).convert("RGB"), np.float32) / 255
-    covered_texels = np.asarray(Image.open(covered)) > 127
-    valid_texels = np.asarray(Image.open(valid)) > 127
-    factor = colors.shape[0] // SIZE
-
-    ctx.progress(0.0, "preparing the maps")
-    position, mask = _geometry(vertices, faces, normals, uv)
-    valid_map = torch.from_numpy(valid_texels[::-1].copy()).float().to(DEVICE)[None, None]
-    color_map = torch.from_numpy(colors[::-1].copy()).to(DEVICE).permute(2, 0, 1)[None]
+def _known(valid, mask, factor):
+    """Returns (valid_map, share, weight) of the (H, W) boolean `valid` texels of an atlas `factor` times SIZE wide:
+    the (1, 1, H, W) float valid map, the (1, 1, SIZE, SIZE) share of valid texels in each reduced texel and the float
+    weight of the known reduced texels; `mask` is the UV-triangle mask of the reduced size. Row 0 is at v = 0."""
+    valid_map = torch.from_numpy(valid[::-1].copy()).float().to(DEVICE)[None, None]
     share = F.avg_pool2d(valid_map, factor)
-    baked_weight = (share >= KNOWN_SHARE).float() * mask
-    baked_image = F.avg_pool2d(color_map * valid_map, factor) / share.clamp(min=1e-6) * baked_weight
-    del valid_map, color_map, share
-    ctx.check_cancel()
+    return valid_map, share, (share >= KNOWN_SHARE).float() * mask
 
-    pipe = OutpainterPipe.__new__(OutpainterPipe)
-    pipe.device, pipe.dtype, pipe.clip = DEVICE, torch.bfloat16, ctx.model["clip"]
-    ctx.progress(0.1, "encoding the views")
-    with mapped.on_gpu(DEVICE, pipe.clip.image_encoder, pipe.clip.visual), torch.no_grad():
-        condition = pipe.prepare_condition_info(None, None, _views_on_black(views), baked_image, baked_weight)
-    pipe.prepare_condition_info = lambda *_: condition
-    pipe.outpainter, pipe.pbar = ctx.model["outpainter"], _Steps(ctx)
-    ctx.check_cancel()
 
-    ctx.progress(0.3, "sampling")
-    torch.manual_seed(SEED)
-    with mapped.on_gpu(DEVICE, pipe.outpainter):
-        sampled = pipe(None, None, None, baked_image, baked_weight, mask, position, STEPS, CFG_SCALE, GUIDANCE_INTERVAL,
-                       GUIDANCE_RESCALE)
+def _reduced(colors, valid_map, share, weight, factor):
+    """Returns the (1, 3, SIZE, SIZE) mean color of the valid texels, zero where `weight` is, of the atlas `colors`
+    (H, W, 3 floats) reduced by `factor`; the other arguments are the results of _known."""
+    color_map = torch.from_numpy(colors[::-1].copy()).to(DEVICE).permute(2, 0, 1)[None]
+    return F.avg_pool2d(color_map * valid_map, factor) / share.clamp(min=1e-6) * weight
 
-    ctx.progress(0.85, "completing the atlas")
-    sampled, mask = sampled.flip(2), mask.flip(2)
-    enlarged = F.interpolate(sampled * mask, scale_factor=factor, mode="bilinear", align_corners=False)
-    enlarged_mask = F.interpolate(mask, scale_factor=factor, mode="bilinear", align_corners=False)
-    fill = (enlarged / enlarged_mask.clamp(min=1e-6))[0].permute(1, 2, 0).cpu().numpy()
-    missing = covered_texels & ~valid_texels & (enlarged_mask[0, 0].cpu().numpy() > 0)
-    texture = np.where(valid_texels[..., None], colors, 0.0).astype(np.float32)
-    texture[missing] = fill[missing]
-    known = (valid_texels | missing).astype(np.float32)
+
+def _grown(texture, known):
+    """Returns the float32 `texture` (H, W, 3) grown GROW texels past its `known` texels (H, W floats, 1 where known)
+    by repeated averaging of the known neighbors."""
     for _ in range(GROW):
         smooth = cv2.blur(texture * known[..., None], (3, 3))
         weight = cv2.blur(known, (3, 3))
         grow = (known == 0) & (weight > 0)
         texture[grow] = smooth[grow] / weight[grow][:, None]
         known[grow] = 1
-    ctx.check_cancel()
+    return texture
 
-    ctx.progress(0.97, "writing")
-    path = ctx.dir / "mesh.glb"
-    meshops.write_glb(path, vertices, faces, normals, uv, Image.fromarray((texture.clip(0, 1) * 255).round()
-                                                                          .astype(np.uint8)))
-    return {"mesh": str(path), "vertices": len(vertices), "faces": len(faces), "texture_size": colors.shape[0],
-            "filled_texels": int(missing.sum())}
+
+def run(ctx, mesh, covered, valid, sets):
+    vertices, faces, uv = meshops.load_glb(mesh)
+    covered_texels = np.asarray(Image.open(covered)) > 127
+    valid_texels = np.asarray(Image.open(valid)) > 127
+    factor = covered_texels.shape[0] // SIZE
+    atlases = [np.asarray(Image.open(entry["atlas"]).convert("RGB"), np.float32) / 255 for entry in sets]
+
+    ctx.progress(0.0, "preparing the maps")
+    position, mask = _geometry(vertices, faces, uv)
+    valid_map, share, baked_weight = _known(valid_texels, mask, factor)
+    pipe = OutpainterPipe.__new__(OutpainterPipe)
+    pipe.device, pipe.dtype, pipe.clip = DEVICE, torch.bfloat16, ctx.model["clip"]
+    conditions = []
+    with mapped.on_gpu(DEVICE, pipe.clip.image_encoder, pipe.clip.visual), torch.no_grad():
+        for number, (entry, colors) in enumerate(zip(sets, atlases)):
+            ctx.check_cancel()
+            ctx.progress(0.1 * (number + 1) / len(sets), f"encoding the views of set {number + 1}/{len(sets)}")
+            baked_image = _reduced(colors, valid_map, share, baked_weight, factor)
+            conditions.append(pipe.prepare_condition_info(None, None, _views_on_black(entry["views"]), baked_image,
+                                                          baked_weight))
+
+    flipped = mask.flip(2)
+    enlarged_mask = F.interpolate(flipped, scale_factor=factor, mode="bilinear", align_corners=False)
+    missing = covered_texels & ~valid_texels & (enlarged_mask[0, 0].cpu().numpy() > 0)
+    pipe.outpainter = ctx.model["outpainter"]
+    paths = []
+    with mapped.on_gpu(DEVICE, pipe.outpainter):
+        for number, (condition, colors) in enumerate(zip(conditions, atlases)):
+            start = 0.1 + 0.85 * number / len(sets)
+            pipe.pbar = _Steps(ctx, start, start + 0.85 / len(sets), f"set {number + 1}/{len(sets)}, ")
+            pipe.prepare_condition_info = lambda *_: condition
+            torch.manual_seed(SEED)
+            sampled = pipe(None, None, None, condition["baked_image"], condition["baked_weight"], mask, position, STEPS,
+                           CFG_SCALE, GUIDANCE_INTERVAL, GUIDANCE_RESCALE)
+            enlarged = F.interpolate(sampled.flip(2) * flipped, scale_factor=factor, mode="bilinear",
+                                     align_corners=False)
+            fill = (enlarged / enlarged_mask.clamp(min=1e-6))[0].permute(1, 2, 0).cpu().numpy()
+            texture = np.where(valid_texels[..., None], colors, 0.0).astype(np.float32)
+            texture[missing] = fill[missing]
+            texture = _grown(texture, (valid_texels | missing).astype(np.float32))
+            paths.append(ctx.dir / f"atlas_{number}.png")
+            Image.fromarray((texture.clip(0, 1) * 255).round().astype(np.uint8)).save(paths[-1])
+    return {"atlases": [str(path) for path in paths]}
