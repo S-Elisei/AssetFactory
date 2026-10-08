@@ -4,7 +4,7 @@ params:
   image: One image of a single object, the whole object visible. An image whose background is already transparent is used as is, its alpha being the object mask; any other image has its background removed.
   steps: Number of sampling steps.
   guidance_scale: Classifier-free guidance scale.
-  octree_resolution: Resolution of the grid the surface is extracted on.
+  octree_resolution: Resolution of the grid the surface is extracted on, in cells per axis.
   target_faces: Face count of the final mesh. A value of 0 or below leaves the cleaned mesh undecimated.
   seed: Seed of the random draws; "random" picks a seed. Item i of a job with count above 1 uses the seed plus i.
 outputs:

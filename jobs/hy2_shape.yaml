@@ -4,7 +4,8 @@ params:
   image: One image of a single object, the whole object visible. An image whose background is already transparent is used as is, its alpha being the object mask; any other image has its background removed.
   steps: Number of sampling steps.
   guidance_scale: Guidance strength.
-  octree_resolution: Resolution of the grid the surface is extracted on.
+  octree_resolution: Resolution of the grid the surface is extracted on; the FlashVDM decoder extracts it on 126, 190,
+    252 or 380 cells per axis for 128, 192, 256 or 384.
   num_chunks: Number of query points the volume decoder evaluates per batch.
   target_faces: Face count of the final mesh. A value of 0 or below leaves the cleaned mesh undecimated.
   seed: Seed of the random draws; "random" picks a seed. Item i of a job with count above 1 uses the seed plus i.

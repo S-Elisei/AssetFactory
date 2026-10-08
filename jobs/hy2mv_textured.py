@@ -34,7 +34,7 @@ class Hy2mvTextured(Job):
         right: Files([".png", ".jpg", ".jpeg", ".webp", ".bmp"], 0, 1)
         steps: int = Field(ge=1, le=30)
         guidance_scale: float = Field(ge=1.0, le=15.0)
-        octree_resolution: int = Field(ge=64, le=384)
+        octree_resolution: Literal[128, 192, 256, 384]
         num_chunks: int = Field(ge=1000, le=200000)
         target_faces: int
         texture_resolution: Literal[512, 1024, 2048]
