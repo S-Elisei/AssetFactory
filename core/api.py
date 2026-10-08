@@ -291,6 +291,7 @@ class Api:
 
         async def stream():
             try:
+                yield ": connected\n\n"
                 while True:
                     try:
                         job_id = await asyncio.wait_for(queue.get(), KEEPALIVE_SECONDS)
