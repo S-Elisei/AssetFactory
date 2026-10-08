@@ -3,10 +3,9 @@ container: background removal with the `bgremove` stage code (BiRefNet), the spa
 texture latent), the shape decoder, dual-contouring remesh and simplification with CuMesh on the GPU. The mesh has no
 UVs and no attributes.
 
-The weights are in the Modal Volume `VOLUME`, mounted at WEIGHTS: the Hugging Face cache of the repositories, the
-converted weight files of the shape models in CONVERTED (each tensor in the dtype of the model's parameter or buffer of
-that name) and the file INDEX that `download_weights` writes. The models are built without weights and their tensors are
-loaded straight onto the GPU. The Triton kernel cache and the FlexGEMM autotuning cache are kept in the Volume and
+The weights are in the Modal Volume `VOLUME`, mounted at WEIGHTS: the Hugging Face cache of the repositories. The shape
+models are built without weights and their tensors are loaded straight onto the GPU, each in the dtype of the model's
+parameter or buffer of that name. The Triton kernel cache and the FlexGEMM autotuning cache are kept in the Volume and
 committed after every call. Calls: see the package docstring."""
 import time
 from pathlib import Path
@@ -40,10 +39,14 @@ FLASH_ATTN_WHEEL = ("https://github.com/Dao-AILab/flash-attention/releases/downl
                     "flash_attn-2.7.4.post1+cu12torch2.6cxx11abiFALSE-cp310-cp310-linux_x86_64.whl")
 
 PIPELINE_REPO = "microsoft/TRELLIS.2-4B"
-# Written by download_weights, read by load: the `args` of the repository's pipeline.json and, for each model in
-# SHAPE_MODELS, the paths of its config file and its converted weights file.
-INDEX = f"{WEIGHTS}/trellis2.json"
-CONVERTED = Path(WEIGHTS) / "trellis2"
+PIPELINE_REVISION = "af44b45f2e35a493886929c6d786e563ec68364d"
+IMAGE_REPO = "microsoft/TRELLIS-image-large"
+IMAGE_REVISION = "25e0d31ffbebe4b5a97464dd851910efc3002d96"
+DINOV3_REPO = "facebook/dinov3-vitl16-pretrain-lvd1689m"
+DINOV3_REVISION = "ea8dc2863c51be0a264bab82070e3e8836b02d51"
+DINOV3_FILES = ["*.json", "*.safetensors"]
+# Revision of each repository that `download_weights` and `load` read, by repository name.
+REVISIONS = {PIPELINE_REPO: PIPELINE_REVISION, IMAGE_REPO: IMAGE_REVISION, DINOV3_REPO: DINOV3_REVISION}
 TRITON_CACHE = f"{WEIGHTS}/triton"
 FLEXGEMM_CACHE = f"{WEIGHTS}/flex_gemm/autotune_cache.json"
 # The models of the sparse structure and of the shape.
@@ -89,6 +92,7 @@ image = (
         f"pip install --no-build-isolation --no-deps {SOURCE}/o-voxel",
     )
     .add_local_file(ROOT / "stages" / "triposg" / "bgremove.py", f"{SHARED}/bgremove.py")
+    .add_local_file(ROOT / "shared" / "hub.py", f"{SHARED}/hub.py")
     .add_local_file(ROOT / "shared" / "mapped.py", f"{SHARED}/mapped.py")
     .add_local_file(ROOT / "worker" / "context.py", f"{SHARED}/context.py")
 )
@@ -97,45 +101,46 @@ app = modal.App(APP_NAME, image=image)
 weights_app = modal.App(WEIGHTS_APP_NAME, image=image)
 
 
+def _pipeline_args():
+    """Returns the `args` of the pipeline.json of PIPELINE_REPO."""
+    import json
+
+    import hub
+
+    pipeline_file = hub.file(PIPELINE_REPO, PIPELINE_REVISION, "pipeline.json")
+    return json.loads(Path(pipeline_file).read_text(encoding="utf-8"))["args"]
+
+
+def _model_files(args, name):
+    """Returns the paths of the config file and of the weights file of the model `name` of the pipeline `args`. An entry
+    of `args["models"]` that starts with the name of a repository of REVISIONS is a path in that repository, any other
+    entry is a path in PIPELINE_REPO."""
+    import hub
+
+    entry = args["models"][name]
+    repo = "/".join(entry.split("/")[:2])
+    if repo in REVISIONS:
+        stem = entry[len(repo) + 1:]
+    else:
+        repo, stem = PIPELINE_REPO, entry
+    return hub.file(repo, REVISIONS[repo], f"{stem}.json"), hub.file(repo, REVISIONS[repo], f"{stem}.safetensors")
+
+
 @weights_app.function(volumes={WEIGHTS: volume}, timeout=3600)
 def download_weights(hf_token):
-    """Fetches the files that `load` reads into the Volume, writes the converted weight files and INDEX; files already
-    written are kept. The converted file of a model holds the tensors of its weights file that have a parameter or
-    buffer of that name in the model, in the dtype of that parameter or buffer."""
-    import json
+    """Fetches the files that `load` reads into the Volume; files already fetched are kept."""
     import os
 
     import bgremove
-    import mapped
-    from accelerate import init_empty_weights
-    from huggingface_hub import file_exists, hf_hub_download, snapshot_download
-    from safetensors import safe_open
-    from trellis2 import models as trellis_models
+    import hub
 
     os.environ["HF_TOKEN"] = hf_token
-    args = json.loads(Path(hf_hub_download(PIPELINE_REPO, "pipeline.json")).read_text(encoding="utf-8"))["args"]
-    CONVERTED.mkdir(parents=True, exist_ok=True)
-    index = {}
+    args = _pipeline_args()
     for name in SHAPE_MODELS:
-        entry = args["models"][name]
-        if file_exists(PIPELINE_REPO, f"{entry}.json"):
-            repo, stem = PIPELINE_REPO, entry
-        else:
-            repo, stem = "/".join(entry.split("/")[:2]), "/".join(entry.split("/")[2:])
-        config_file = hf_hub_download(repo, f"{stem}.json")
-        weights_file = hf_hub_download(repo, f"{stem}.safetensors")
-        converted = CONVERTED / f"{name}.safetensors"
-        if not converted.exists():
-            config = json.loads(Path(config_file).read_text(encoding="utf-8"))
-            with init_empty_weights():
-                state = getattr(trellis_models, config["name"])(**config["args"]).state_dict()
-            with safe_open(weights_file, "pt") as file:
-                mapped.save_weights(converted, {key: file.get_tensor(key).to(state[key].dtype)
-                                                for key in file.keys() if key in state})
-        index[name] = [config_file, str(converted)]
-    snapshot_download(args["image_cond_model"]["args"]["model_name"], allow_patterns=["*.json", "*.safetensors"])
+        _model_files(args, name)
+    dino = args["image_cond_model"]["args"]["model_name"]
+    hub.snapshot(dino, REVISIONS[dino], DINOV3_FILES)
     bgremove.download()
-    Path(INDEX).write_text(json.dumps({"args": args, "models": index}), encoding="utf-8")
     volume.commit()
 
 
@@ -147,13 +152,15 @@ def download_weights(hf_token):
 class Trellis2:
     @modal.enter(snap=True)
     def load(self):
-        """Loads every model onto the GPU, then runs one short generation. The BiRefNet tensors are copied to the GPU
-        and their memory maps released."""
+        """Loads every model onto the GPU, then runs one short generation. Of the tensors of a shape model's weights
+        file, those that have a parameter or buffer of that name in the model are loaded, in the dtype of that
+        parameter or buffer. The BiRefNet tensors are copied to the GPU and their memory maps released."""
         import json
 
         import bgremove
+        import hub
         from accelerate import init_empty_weights
-        from safetensors.torch import load_file
+        from safetensors import safe_open
         from torchvision import transforms
         from transformers import DINOv3ViTModel
         from trellis2 import models
@@ -161,20 +168,24 @@ class Trellis2:
         from trellis2.pipelines import Trellis2ImageTo3DPipeline, samplers
 
         Path(FLEXGEMM_CACHE).parent.mkdir(parents=True, exist_ok=True)
-        index = json.loads(Path(INDEX).read_text(encoding="utf-8"))
-        args = index["args"]
+        args = _pipeline_args()
         loaded = {}
-        for name, (config_file, weights_file) in index["models"].items():
+        for name in SHAPE_MODELS:
+            config_file, weights_file = _model_files(args, name)
             config = json.loads(Path(config_file).read_text(encoding="utf-8"))
             with init_empty_weights():
                 model = getattr(models, config["name"])(**config["args"])
-            load_strict(model, load_file(weights_file, device="cuda"))
+            state = model.state_dict()
+            with safe_open(weights_file, "pt", device="cuda") as file:
+                load_strict(model, {key: file.get_tensor(key).to(state[key].dtype) for key in file.keys()
+                                    if key in state})
             loaded[name] = model.to("cuda")
 
         extractor_class = image_feature_extractor.DinoV3FeatureExtractor
         extractor = extractor_class.__new__(extractor_class)
         extractor.model_name = args["image_cond_model"]["args"]["model_name"]
-        extractor.model = DINOv3ViTModel.from_pretrained(extractor.model_name, device_map="cuda").eval()
+        extractor.model = DINOv3ViTModel.from_pretrained(
+            hub.snapshot(extractor.model_name, REVISIONS[extractor.model_name], DINOV3_FILES), device_map="cuda").eval()
         extractor.image_size = 512
         extractor.transform = transforms.Compose([transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                                                        std=[0.229, 0.224, 0.225])])

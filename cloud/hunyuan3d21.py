@@ -31,6 +31,7 @@ SOURCE = "/opt/hy3d21"
 SHARED = "/opt/af"
 HUNYUAN_COMMIT = "82920d643c0dc2f7bfd7255f45f62d386edfe60c"
 REPO = "tencent/Hunyuan3D-2.1"
+REVISION = "0b94677654c57bb9a6b6845cd7b704ccf551d327"
 DIRECTORY = "hunyuan3d-dit-v2-1"
 # Written by download_weights, read by load: the checkpoint's tensors named `<group>.<name>` for the groups `model`,
 # `vae` and `conditioner`.
@@ -44,7 +45,7 @@ image = (
     .pip_install("transformers==4.46.0", "diffusers==0.30.0", "accelerate==1.1.1", "pytorch-lightning==1.9.5",
                  "huggingface-hub==0.30.2", "hf-xet==1.0.3", "safetensors==0.4.4", "numpy==1.24.4", "scipy==1.14.1",
                  "einops==0.8.0", "opencv-python-headless==4.10.0.84", "imageio==2.36.0", "scikit-image==0.24.0",
-                 "kornia==0.8.3", "trimesh==4.4.7", "pymeshlab==2022.2.post3", "omegaconf==2.3.0", "pyyaml==6.0.2",
+                 "kornia==0.8.2", "trimesh==4.4.7", "pymeshlab==2022.2.post3", "omegaconf==2.3.0", "pyyaml==6.0.2",
                  "tqdm==4.66.5", "timm==1.0.15", "torchdiffeq==0.2.5", "pillow==10.4.0", "setuptools==75.8.0")
     .env({"HF_HOME": f"{WEIGHTS}/hf", "PYTHONPATH": f"{SOURCE}/hy3dshape:{SHARED}"})
     .run_commands(
@@ -52,12 +53,21 @@ image = (
         f"git -C {SOURCE} checkout -q {HUNYUAN_COMMIT}",
     )
     .add_local_file(ROOT / "stages" / "triposg" / "bgremove.py", f"{SHARED}/bgremove.py")
+    .add_local_file(ROOT / "shared" / "hub.py", f"{SHARED}/hub.py")
     .add_local_file(ROOT / "shared" / "mapped.py", f"{SHARED}/mapped.py")
     .add_local_file(ROOT / "worker" / "context.py", f"{SHARED}/context.py")
 )
 volume = modal.Volume.from_name(VOLUME, create_if_missing=True)
 app = modal.App(APP_NAME, image=image)
 weights_app = modal.App(WEIGHTS_APP_NAME, image=image)
+
+
+def _config():
+    """Returns the config of the DiT folder of REPO at REVISION."""
+    import hub
+    import yaml
+
+    return yaml.safe_load(Path(hub.file(REPO, REVISION, f"{DIRECTORY}/config.yaml")).read_text(encoding="utf-8"))
 
 
 @weights_app.function(volumes={WEIGHTS: volume}, memory=MEMORY_MIB, timeout=3600)
@@ -68,16 +78,15 @@ def download_weights(hf_token):
     import os
 
     import bgremove
+    import hub
     import mapped
     import torch
-    import yaml
     from accelerate import init_empty_weights
-    from huggingface_hub import hf_hub_download
     from hy3dshape.pipelines import instantiate_from_config
 
     os.environ["HF_TOKEN"] = hf_token
-    config = yaml.safe_load(Path(hf_hub_download(REPO, f"{DIRECTORY}/config.yaml")).read_text(encoding="utf-8"))
-    checkpoint = hf_hub_download(REPO, f"{DIRECTORY}/model.fp16.ckpt")
+    config = _config()
+    checkpoint = hub.file(REPO, REVISION, f"{DIRECTORY}/model.fp16.ckpt")
     bgremove.download()
     if not WEIGHTS_FILE.exists():
         with init_empty_weights():
@@ -101,13 +110,11 @@ class Hunyuan3D21:
         are copied to the GPU and their memory maps released."""
         import bgremove
         import torch
-        import yaml
         from accelerate import init_empty_weights
-        from huggingface_hub import hf_hub_download
         from hy3dshape.pipelines import Hunyuan3DDiTFlowMatchingPipeline, instantiate_from_config
         from safetensors.torch import load_file
 
-        config = yaml.safe_load(Path(hf_hub_download(REPO, f"{DIRECTORY}/config.yaml")).read_text(encoding="utf-8"))
+        config = _config()
         tensors = load_file(WEIGHTS_FILE, device="cuda")
 
         def build(group, load):

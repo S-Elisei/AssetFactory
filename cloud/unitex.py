@@ -39,10 +39,13 @@ UNITEX_COMMIT = "affa1e29e665670dbdfd13ee4a3a68a45942df47"
 NVDIFFRAST_COMMIT = "253ac4fcea7de5f396371124af597e6cc957bfae"
 
 FLUX_REPO = "black-forest-labs/FLUX.1-dev"
+FLUX_REVISION = "3de623fc3c33e44ffbe2bad470d0f45bccf2eb21"
 FLUX_FILES = ["model_index.json", "scheduler/*", "transformer/*", "vae/*"]
 SD3_REPO = "stabilityai/stable-diffusion-3-medium-diffusers"
+SD3_REVISION = "ea42f8cef0f178587cf766dc8129abd379c90671"
 SD3_FILES = ["model_index.json", "transformer/*", "vae/*"]
 UNITEX_REPO = "lyxun/UniTEX"
+UNITEX_REVISION = "46e1659bffb79480921afbdc73cee28847600357"
 # The LoRA files of the texture pass and of the delight pass, in the order of ADAPTERS.
 LORAS = ["mv_lora_weights.safetensors", "delight_lora_weights.safetensors"]
 ADAPTERS = ["texture", "delight"]
@@ -90,6 +93,7 @@ image = (
         f"git -C {SOURCE} checkout -q {UNITEX_COMMIT}",
     )
     .add_local_file(ROOT / "stages" / "triposg" / "bgremove.py", f"{SHARED}/bgremove.py")
+    .add_local_file(ROOT / "shared" / "hub.py", f"{SHARED}/hub.py")
     .add_local_file(ROOT / "shared" / "mapped.py", f"{SHARED}/mapped.py")
     .add_local_file(ROOT / "shared" / "meshops.py", f"{SHARED}/meshops.py")
     .add_local_file(ROOT / "worker" / "context.py", f"{SHARED}/context.py")
@@ -109,20 +113,20 @@ def download_weights(hf_token):
     import tempfile
 
     import bgremove
+    import hub
     import mapped
     import torch
-    from huggingface_hub import hf_hub_download, snapshot_download
     from safetensors.torch import load_file
 
     os.environ["HF_TOKEN"] = hf_token
-    flux = Path(snapshot_download(FLUX_REPO, allow_patterns=FLUX_FILES))
+    flux = Path(hub.snapshot(FLUX_REPO, FLUX_REVISION, FLUX_FILES))
     if not VAE_WEIGHTS.exists():
         CONVERTED.mkdir(parents=True, exist_ok=True)
         mapped.save_weights(VAE_WEIGHTS, {key: tensor.to(torch.bfloat16) for key, tensor in
                                           load_file(flux / "vae" / "diffusion_pytorch_model.safetensors").items()})
-    snapshot_download(SD3_REPO, allow_patterns=SD3_FILES)
+    hub.snapshot(SD3_REPO, SD3_REVISION, SD3_FILES)
     for name in LORAS:
-        hf_hub_download(UNITEX_REPO, name)
+        hub.file(UNITEX_REPO, UNITEX_REVISION, name)
     bgremove.download()
     if not all((TSDSR / folder / name).exists() for name, folder in TSDSR_FILES.items()):
         with tempfile.TemporaryDirectory() as temporary:
@@ -208,12 +212,12 @@ class UniTEX:
         import sys
 
         import bgremove
+        import hub
         from diffusers import AutoencoderKL, FlowMatchEulerDiscreteScheduler, FluxTransformer2DModel
         from flux_piplines.texturing.pipeline import PBRFluxPipeline
-        from huggingface_hub import hf_hub_download, snapshot_download
         from TSD_SR.sr_pipeline import TSDSRPipeline
 
-        flux = Path(snapshot_download(FLUX_REPO, allow_patterns=FLUX_FILES))
+        flux = Path(hub.snapshot(FLUX_REPO, FLUX_REVISION, FLUX_FILES))
         self.pipeline = PBRFluxPipeline(
             scheduler=FlowMatchEulerDiscreteScheduler.from_pretrained(flux, subfolder="scheduler"),
             vae=_model(lambda: AutoencoderKL.from_config(AutoencoderKL.load_config(flux / "vae")),
@@ -226,10 +230,11 @@ class UniTEX:
                 flux / "transformer")), sorted((flux / "transformer").glob("diffusion_pytorch_model-*.safetensors"))),
         )
         for name, file in zip(ADAPTERS, LORAS):
-            self.pipeline.load_lora_weights(hf_hub_download(UNITEX_REPO, file), adapter_name=name)
+            self.pipeline.load_lora_weights(hub.file(UNITEX_REPO, UNITEX_REVISION, file), weight_name=file,
+                                            adapter_name=name)
         self.pipeline.set_progress_bar_config(disable=True)
 
-        sd3 = Path(snapshot_download(SD3_REPO, allow_patterns=SD3_FILES))
+        sd3 = Path(hub.snapshot(SD3_REPO, SD3_REVISION, SD3_FILES))
         sys.argv = ["tsdsr", "--pretrained_model_name_or_path", str(sd3), "--lora_dir",
                     str(TSDSR / "checkpoint" / "tsdsr"), "--embedding_dir", str(TSDSR / "dataset" / "default")]
         self.upscaler = TSDSRPipeline()
