@@ -15,10 +15,10 @@ def seed_everything(seed):
     torch.manual_seed(seed)
 
 
-def open_audio(name, path, formats):
+def open_audio(name, path):
     """Returns the soundfile.SoundFile of the audio file `path`, which the caller closes. Raises InputError naming the
-    input `name` and the `formats` to send when the file cannot be read."""
+    input `name` when the file cannot be read."""
     try:
         return soundfile.SoundFile(path)
     except soundfile.LibsndfileError:
-        raise InputError(f"{name}: the file is not a readable audio file; send {formats}")
+        raise InputError(f"{name}: the file is not a readable audio file; send an undamaged audio file")

@@ -13,4 +13,4 @@ class SfxText(Job):
         p = ctx.params
         result = await ctx.local("stableaudio", prompt=p.prompt, steps=p.steps, seed=ctx.seed, duration=p.duration,
                                  audio=None, noise_level=None, start_seconds=None, end_seconds=None)
-        ctx.output(result["audio"], "audio")
+        ctx.output(result["audio"])

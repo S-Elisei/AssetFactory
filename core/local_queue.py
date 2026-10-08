@@ -1,8 +1,8 @@
 """LocalQueue: the queue of the local stage calls of the machine. It runs one call at a time and keeps at most one Worker
 process alive; a call for a stage of another environment stops the alive Worker and starts the Worker of that
-environment. Calls are served by priority (higher first), then by arrival; while the oldest waiting call of another
-environment has waited less than AFFINITY_SECONDS, the calls for the alive Worker's environment go first. All methods
-run on one asyncio loop, which must be able to run subprocesses (the Proactor loop on Windows)."""
+environment. Calls are served in the order of arrival; while the oldest waiting call of another environment has waited
+less than AFFINITY_SECONDS, the calls for the alive Worker's environment go first. All methods run on one asyncio loop,
+which must be able to run subprocesses (the Proactor loop on Windows)."""
 import ast
 import asyncio
 import itertools
@@ -61,9 +61,9 @@ class _Call:
     is the result dict or the exception to raise once `ended` is set; `work` is the seconds of the run that the Worker
     reports. `seq` is also the id of its `run` message."""
 
-    def __init__(self, stage, args, directory, priority, progress, charge, tag, seq):
+    def __init__(self, stage, args, directory, progress, charge, tag, seq):
         self.stage, self.env = stage, stage_env(stage)
-        self.args, self.directory, self.priority, self.seq = args, directory, priority, seq
+        self.args, self.directory, self.seq = args, directory, seq
         self.progress, self.charge, self.tag = progress, charge, tag
         self.arrived = time.monotonic()
         self.phase = "waiting"
@@ -119,10 +119,10 @@ class LocalQueue:
         self._wake = asyncio.Event()
         self._idle_since = time.monotonic()
 
-    async def call(self, stage, args, directory, priority, progress, charge, tag):
+    async def call(self, stage, args, directory, progress, charge, tag):
         """Runs the local stage `stage` with `args` (JSON-able keyword arguments of its `run`) and returns the result dict
-        of its `run`. `directory` is the existing folder for the stage's output files. A higher `priority` goes first.
-        `tag` is opaque to the queue and is shown in `status()`.
+        of its `run`. `directory` is the existing folder for the stage's output files. `tag` is opaque to the queue and
+        is shown in `status()`.
         `progress(fraction, message)` is a synchronous callback that must not raise; it is called on the loop for each
         progress message of the run, also while a cancelled run ends, and, while the queue serves no other call, every
         RAM_CHECK_SECONDS while the call is short of RAM.
@@ -132,7 +132,7 @@ class LocalQueue:
         Raises InputError (the message of the stage), OutOfMemory, StageFailed (also when the Worker exits during the
         call) or StageCancelled (also when the queue is stopped). Cancelling the awaiting task cancels the call and
         re-raises the cancellation; a Worker that has not ended the cancelled run within CANCEL_GRACE is killed."""
-        call = _Call(stage, args, directory, priority, progress, charge, tag, next(self._seq))
+        call = _Call(stage, args, directory, progress, charge, tag, next(self._seq))
         self._waiting.append(call)
         if self._task is None:
             self._task = asyncio.create_task(self._serve())
@@ -175,10 +175,10 @@ class LocalQueue:
             await self._stop_worker()
 
     def status(self):
-        """Returns {"worker": {"env", "state": "idle" or "running"} or None, "running": {"stage", "tag", "priority",
-        "phase": "starting" or "running", "fraction", "message"} or None, "waiting": [{"stage", "tag", "priority",
-        "waited"}] in the order the calls are served (waited in seconds), "ram_waits": [{"stage", "tag", "need_gb",
-        "available_gb"}] of the waiting calls that wait for RAM}."""
+        """Returns {"worker": {"env", "state": "idle" or "running"} or None, "running": {"stage", "tag", "phase":
+        "starting" or "running", "fraction", "message"} or None, "waiting": [{"stage", "tag", "waited"}] in the order
+        the calls are served (waited in seconds), "ram_waits": [{"stage", "tag", "need_gb", "available_gb"}] of the
+        waiting calls that wait for RAM}."""
         now = time.monotonic()
         waiting = self._order()
         current = self._current
@@ -187,10 +187,10 @@ class LocalQueue:
             "worker": None if worker is None else {"env": worker.env,
                                                    "state": "idle" if worker.call is None else "running"},
             "running": None if current is None else {"stage": current.stage, "tag": current.tag,
-                                                     "priority": current.priority, "phase": current.phase,
-                                                     "fraction": current.fraction, "message": current.message},
-            "waiting": [{"stage": call.stage, "tag": call.tag, "priority": call.priority,
-                         "waited": round(now - call.arrived, 1)} for call in waiting],
+                                                     "phase": current.phase, "fraction": current.fraction,
+                                                     "message": current.message},
+            "waiting": [{"stage": call.stage, "tag": call.tag, "waited": round(now - call.arrived, 1)}
+                        for call in waiting],
             "ram_waits": [{"stage": call.stage, "tag": call.tag, "need_gb": call.ram[0],
                            "available_gb": round(call.ram[1], 1)} for call in waiting if call.ram is not None],
         }
@@ -205,9 +205,9 @@ class LocalQueue:
         return available / GB
 
     def _order(self):
-        """The waiting calls in the order they are served: by priority, then arrival; the calls for the alive Worker's
-        environment first while the oldest call of another environment has waited less than AFFINITY_SECONDS."""
-        ordered = sorted(self._waiting, key=lambda call: (-call.priority, call.seq))
+        """The waiting calls in the order they are served: by arrival; the calls for the alive Worker's environment
+        first while the oldest call of another environment has waited less than AFFINITY_SECONDS."""
+        ordered = list(self._waiting)
         alive = None if self._worker is None else self._worker.env
         others = [call.arrived for call in ordered if call.env != alive]
         if alive is not None and others and time.monotonic() - min(others) < AFFINITY_SECONDS:

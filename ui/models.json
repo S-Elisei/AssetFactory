@@ -1,0 +1,44 @@
+{"models": [
+  {"name": "Z-Image-Turbo", "tasks": [
+    {"task": "text-to-image", "job": "zimage_text_to_image", "values": {"width": 1024, "height": 1024, "steps": 8}},
+    {"task": "image-to-image", "job": "zimage_image_to_image", "values": {"strength": 0.85, "steps": 8}}]},
+  {"name": "FLUX.2-klein-4B", "tasks": [
+    {"task": "text-to-image", "job": "flux2_text_to_image", "values": {"width": 1024, "height": 1024, "steps": 4}},
+    {"task": "image-edit", "job": "flux2_image_edit", "values": {"width": 1024, "height": 1024, "steps": 4}}]},
+  {"name": "TripoSG", "tasks": [
+    {"task": "image-to-3d", "job": "triposg_shape", "values": {"steps": 50, "guidance_scale": 7.0, "octree_depth": 9, "target_faces": 40000}}]},
+  {"name": "Hunyuan3D-2", "tasks": [
+    {"task": "image-to-shape", "job": "hy2_shape", "values": {"steps": 5, "guidance_scale": 5.0, "octree_resolution": 256, "num_chunks": 20000, "target_faces": 40000}},
+    {"task": "image-to-3d", "job": "hy2_textured", "values": {"steps": 5, "guidance_scale": 5.0, "octree_resolution": 256, "num_chunks": 20000, "target_faces": 40000, "texture_resolution": 1024, "delight": true, "normal_map": true}}]},
+  {"name": "Hunyuan3D-2mv", "tasks": [
+    {"task": "multiview-to-shape", "job": "hy2mv_shape", "values": {"steps": 5, "guidance_scale": 5.0, "octree_resolution": 256, "num_chunks": 20000, "target_faces": 40000}},
+    {"task": "multiview-to-3d", "job": "hy2mv_textured", "values": {"steps": 5, "guidance_scale": 5.0, "octree_resolution": 256, "num_chunks": 20000, "target_faces": 40000, "texture_resolution": 1024, "delight": true, "normal_map": true}}]},
+  {"name": "Hunyuan3D-2.1", "tasks": [
+    {"task": "image-to-3d", "job": "hy21_shape", "values": {"steps": 30, "guidance_scale": 5.0, "octree_resolution": 256, "target_faces": 40000}}]},
+  {"name": "TRELLIS.2", "tasks": [
+    {"task": "image-to-3d", "job": "trellis2_shape", "values": {"resolution": 1024, "steps": 12, "target_faces": 500000}}]},
+  {"name": "Stable Fast 3D", "tasks": [
+    {"task": "image-to-3d", "job": "sf3d_textured", "values": {"texture_resolution": 1024, "remesh": "none", "target_vertex_count": -1, "foreground_ratio": 0.85, "input_elevation_deg": 0}}]},
+  {"name": "Hunyuan3D-Paint", "tasks": [
+    {"task": "mesh-texturing", "job": "hypaint_texture", "values": {"texture_resolution": 1024, "delight": true}}]},
+  {"name": "MV-Adapter texture", "tasks": [
+    {"task": "mesh-texturing", "job": "mvadapter_texture", "values": {"steps": 15, "guidance_scale": 3.0, "texture_resolution": 2048}}]},
+  {"name": "UniTex", "tasks": [
+    {"task": "texture", "job": "unitex_texture", "values": {"delight": true, "texture_size": 2048, "atlas": "delit"}}]},
+  {"name": "Mesh unwrap", "tasks": [
+    {"task": "mesh-unwrap", "job": "mesh_unwrap", "values": {}}]},
+  {"name": "Stable Audio 3 small SFX", "tasks": [
+    {"task": "text-to-audio", "job": "sfx_text", "values": {"duration": 5, "steps": 8}},
+    {"task": "audio-to-audio", "job": "sfx_audio_to_audio", "values": {"noise_level": 0.6, "steps": 8}},
+    {"task": "audio-continue", "job": "sfx_continue", "values": {"duration": 9, "steps": 8}},
+    {"task": "audio-inpaint", "job": "sfx_inpaint", "values": {"start_seconds": 2, "end_seconds": 3.5, "steps": 8}}]},
+  {"name": "ACE-Step 1.5", "tasks": [
+    {"task": "text-to-music", "job": "music_text", "values": {"duration": 30, "bpm": 0, "keyscale": "", "timesignature": "", "vocal_language": "unknown", "thinking": true, "rewrite_caption": false, "lm_temperature": 0.85, "steps": 8, "shift": 3.0}},
+    {"task": "audio-cover", "job": "music_cover", "values": {"cover_strength": 0.5, "vocal_language": "unknown", "steps": 8, "shift": 3.0}},
+    {"task": "audio-extend", "job": "music_extend", "values": {"extend_seconds": 15, "vocal_language": "unknown", "steps": 8, "shift": 3.0}},
+    {"task": "audio-repaint", "job": "music_repaint", "values": {"start_seconds": 10, "end_seconds": 20, "vocal_language": "unknown", "steps": 8, "shift": 3.0}}]},
+  {"name": "Chatterbox Multilingual V3", "tasks": [
+    {"task": "text-to-speech", "job": "chatterbox_speech", "values": {"language": "en", "exaggeration": 0.5, "cfg_weight": 0.5, "temperature": 0.8, "repetition_penalty": 2.0, "min_p": 0.05, "top_p": 1.0}}]},
+  {"name": "Qwen3-TTS VoiceDesign", "tasks": [
+    {"task": "text-to-speech", "job": "qwen_voicedesign_speech", "values": {"language": "en", "do_sample": true, "temperature": 0.9, "top_k": 50, "top_p": 1.0, "repetition_penalty": 1.05, "subtalker_dosample": true, "subtalker_temperature": 0.9, "subtalker_top_k": 50, "subtalker_top_p": 1.0, "max_new_tokens": 2048}}]}
+]}

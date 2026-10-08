@@ -1,17 +1,20 @@
 """CloudQueue: one lane per Modal app of `cloud/`, all running in parallel. A lane has at most one call computing in
-Modal. It sends the next waiting call (higher priority first, then arrival) when the computing call is ready: its
-`cloud.DONE` message has arrived in its progress queue, else its result has been received, or it has failed or been
-cancelled. Once the `DONE` message has arrived, the download of the result holds the lane no longer. All methods run on
+Modal. It sends the next waiting call (in the order of arrival) when the computing call is ready: its `cloud.DONE`
+message has arrived in its progress queue, else its result has been received, or it has failed or been cancelled. Once the `DONE` message has arrived, the download of the result holds the lane no longer. All methods run on
 one asyncio loop.
 
 Cost. A call is charged (t1 - t0) seconds at the rate of the app, `GPU_RATES[GPU] + CPU_RATE * CPU + MEMORY_RATE *
 MEMORY_MIB / 1024` of its module. t0 is the time the call was sent; t1 is the time of its `DONE` message, else of its
 result, else of its failure or cancellation. A call that was never sent is charged nothing. The work seconds of a call
-are the `seconds` of its result, else t1 - t0."""
+are the `seconds` of its result, else t1 - t0.
+
+Spend. From its creation until `stop`, the CloudQueue reads the Modal credits used and the billed amount of the current
+billing month every SPEND_REFRESH_SECONDS into `spend`, {"credits_used_dollars", "billed_dollars"} (both None until the
+first read succeeds). A failed read keeps the last values."""
 import asyncio
 import importlib
-import itertools
 import time
+from contextlib import suppress
 from pathlib import Path
 
 import cloud
@@ -33,6 +36,8 @@ CPU_RATE = 0.0000131
 MEMORY_RATE = 0.00000222
 # Seconds of one wait for the result of a call, between two reads of its progress queue.
 POLL_SECONDS = 1
+# Seconds between two reads of the Modal credits used and billed amount of the month.
+SPEND_REFRESH_SECONDS = 300
 
 
 @synchronizer.wrap
@@ -62,17 +67,12 @@ def _write(value, directory):
     return result
 
 
-def _order(call):
-    """The key of the order in which the waiting calls of a lane are sent: priority (higher first), then arrival."""
-    return -call.priority, call.seq
-
-
 class _Call:
     """One call: waiting, then sent (a member of the lane's `sent` from its admission to its end). `t0` and `t1` are the
     times of the cost rule; `result` is the result of the Modal call."""
 
-    def __init__(self, files, params, priority, progress, charge, tag, seq):
-        self.files, self.params, self.priority, self.seq = files, params, priority, seq
+    def __init__(self, files, params, progress, charge, tag):
+        self.files, self.params = files, params
         self.progress, self.charge, self.tag = progress, charge, tag
         self.arrived = time.time()
         self.admitted = asyncio.Event()
@@ -92,12 +92,11 @@ class _Lane:
         self.rate = GPU_RATES[module.GPU] + CPU_RATE * module.CPU + MEMORY_RATE * module.MEMORY_MIB / 1024
         self.waiting, self.sent = [], []
         self.computing = None
-        self.seq = itertools.count()
         self.closed = False
         self.seconds = self.dollars = 0.0
 
-    async def call(self, files, params, directory, priority, progress, charge, tag):
-        call = _Call(files, params, priority, progress, charge, tag, next(self.seq))
+    async def call(self, files, params, directory, progress, charge, tag):
+        call = _Call(files, params, progress, charge, tag)
         self.waiting.append(call)
         self._dispatch()
         try:
@@ -122,11 +121,10 @@ class _Lane:
             self._settle(call)
 
     def _dispatch(self):
-        """Sends the best waiting call when the lane is open and no call is computing."""
+        """Sends the oldest waiting call when the lane is open and no call is computing."""
         if self.closed or not self.waiting or self.computing is not None:
             return
-        call = min(self.waiting, key=_order)
-        self.waiting.remove(call)
+        call = self.waiting.pop(0)
         self.sent.append(call)
         self.computing = call
         call.admitted.set()
@@ -206,11 +204,11 @@ class _Lane:
         now = time.time()
 
         def view(call):
-            return {"tag": call.tag, "priority": call.priority, "waited": round(now - call.arrived, 1),
-                    "fraction": call.fraction, "message": call.message}
+            return {"tag": call.tag, "waited": round(now - call.arrived, 1), "fraction": call.fraction,
+                    "message": call.message}
 
         return {"running": None if self.computing is None else view(self.computing),
-                "waiting": [view(call) for call in sorted(self.waiting, key=_order)],
+                "waiting": [view(call) for call in self.waiting],
                 "seconds": round(self.seconds, 1), "dollars": round(self.dollars, 4)}
 
     def close(self):
@@ -226,13 +224,26 @@ class _Lane:
 
 class CloudQueue:
     def __init__(self):
+        """Creates the lanes and starts the reading of the spend; it runs on the running asyncio loop."""
         self._lanes = {app: _Lane(app) for app in cloud_apps()}
+        self.spend = {"credits_used_dollars": None, "billed_dollars": None}
+        self._spend_task = asyncio.create_task(self._read_spend())
 
-    async def call(self, app, files, params, directory, priority, progress, charge, tag):
+    async def _read_spend(self):
+        """Reads the credits used (minus the "Credits" adjustment, 0 when absent) and the billed cost of the current
+        billing month of the Modal workspace, then waits SPEND_REFRESH_SECONDS, forever."""
+        while True:
+            with suppress(Exception):
+                summary = await modal.Workspace.from_context().billing.summary.aio()
+                self.spend = {"credits_used_dollars": round(float(0 - summary.adjustments.get("Credits", 0)), 2),
+                              "billed_dollars": round(float(summary.billed_cost), 2)}
+            await asyncio.sleep(SPEND_REFRESH_SECONDS)
+
+    async def call(self, app, files, params, directory, progress, charge, tag):
         """Runs the call of the Modal app `app` (the module name in `cloud/`) and returns its result dict: every `bytes`
         value written to the file of its key in `directory` and replaced by its path. `files` is {argument name: path of
-        the file}, read as bytes; `params` is the params dict. A higher `priority` is sent first. `tag` is opaque to the
-        queue and is shown in `status()`.
+        the file}, read as bytes; `params` is the params dict. Calls are sent in the order of arrival. `tag` is opaque to
+        the queue and is shown in `status()`.
         `progress(fraction, message)` is a synchronous callback that must not raise; it is called on the loop for each
         message of the container until the call is settled.
         `charge(seconds, dollars)` is a synchronous callback that must not raise; it is called once when the call is
@@ -244,17 +255,19 @@ class CloudQueue:
         `terminate_containers`; after `DONE` nothing is cancelled. A cancellation of the task is re-raised. A cancel
         that happens while the Modal call is being sent can leave that Modal call running. Only `stop()` terminates
         containers."""
-        return await self._lanes[app].call(files, params, directory, priority, progress, charge, tag)
+        return await self._lanes[app].call(files, params, directory, progress, charge, tag)
 
     def status(self):
         """Returns {app: {"running": a call or None, "waiting": [call], "seconds", "dollars"}}; a call is {"tag",
-        "priority", "waited", "fraction", "message"}; `running` is the computing call; `seconds` and `dollars` are the
-        totals of the app since the start."""
+        "waited", "fraction", "message"}; `running` is the computing call; `seconds` and `dollars` are the totals of
+        the app since the start."""
         return {app: lane.status() for app, lane in self._lanes.items()}
 
     async def stop(self):
-        """Stops sending calls, ends the waiting calls as cancelled, cancels every sent call that has a Modal call with
-        its container terminated, then stops the containers of the ready Modal apps."""
+        """Stops reading the spend, stops sending calls, ends the waiting calls as cancelled, cancels every sent call that
+        has a Modal call with its container terminated, then stops the containers of the ready Modal apps."""
+        self._spend_task.cancel()
+        await asyncio.gather(self._spend_task, return_exceptions=True)
         lanes = list(self._lanes.values())
         await asyncio.gather(*(cancel for lane in lanes for cancel in lane.close()))
         await asyncio.gather(*(self._stop_app(lane.name) for lane in lanes if app_readiness(lane.app) is None))

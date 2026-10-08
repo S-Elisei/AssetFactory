@@ -4,7 +4,7 @@ description of every job. The UI is served from `<root>/ui` at `/`.
 
 A request that is refused answers `{"error": {"message": <state and next action>, "details": [<defect>, ...]}}`. A
 request that does not match the request schema lists the defects of the schema. A request that does is checked
-completely - the params of the job, its inputs, and the installation of its stages - and every defect is listed; the
+completely - the params of the job, its files, and the installation of its stages - and every defect is listed; the
 job is created in the same step that follows the checks, with no await between."""
 import asyncio
 import json
@@ -22,6 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, ValidationError
 from starlette.exceptions import HTTPException
 
+from core.cloud_queue import SPEND_REFRESH_SECONDS
 from core.job import SEED_MAX, describe, job_names, load_job
 from core.layout import ROOT
 from core.local_queue import GB, stage_env
@@ -29,9 +30,6 @@ from core.readiness import app_readiness, stage_readiness
 from core.store import FINISHED, Refused
 
 UI = ROOT / "ui"
-# The kind of an uploaded file by its extension.
-UPLOAD_KINDS = {".png": "image", ".jpg": "image", ".jpeg": "image", ".webp": "image", ".bmp": "image",
-                ".wav": "audio", ".mp3": "audio", ".flac": "audio", ".ogg": "audio", ".glb": "mesh"}
 # Limits of the query parameters: the longest wait in seconds, the largest and the default page of the job history.
 WAIT_MAX = 120
 PAGE_MAX = 200
@@ -59,23 +57,14 @@ class JobRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     job: str
     params: dict
-    inputs: dict[str, list[str]] = {}
-    count: int = Field(1, ge=1)
-    priority: int = 0
-    label: str | None = None
-    notify_url: Annotated[str, AfterValidator(_http_url)] | None = None
+    count: int = Field(ge=1)
+    notify_url: Annotated[str, AfterValidator(_http_url)] | None
 
 
 class BatchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     jobs: list[JobRequest] = Field(min_length=1)
-    label: str | None = None
-    notify_url: Annotated[str, AfterValidator(_http_url)] | None = None
-
-
-class RetryRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    seed: Literal["same", "new"] = "same"
+    notify_url: Annotated[str, AfterValidator(_http_url)] | None
 
 
 class Refusal(Exception):
@@ -120,26 +109,12 @@ def _path(*parts):
     return text
 
 
-def _count(minimum, maximum):
-    return str(minimum) if minimum == maximum else f"{minimum} to {maximum}"
-
-
-def _uploads():
-    """The accepted extensions by kind, as text."""
-    kinds = {}
-    for extension, kind in UPLOAD_KINDS.items():
-        kinds.setdefault(kind, []).append(extension)
-    return "; ".join(f"{kind}: {', '.join(extensions)}" for kind, extensions in kinds.items())
-
-
 def _job_section(name, info):
-    """The markdown section of a job from its `describe()` data: description, params schema, inputs, outputs."""
-    inputs = [f"- `{key}`: {spec['kind']}, {_count(spec['min'], spec['max'])} file(s). {spec['description']}"
-              for key, spec in info["inputs"].items()]
+    """The markdown section of a job from its `describe()` data: description, modality, params schema, outputs."""
     outputs = [f"- `{file}`: {text}" for file, text in info["outputs"].items()]
-    return "\n".join([f"### {name}", "", info["description"], "", "Params (JSON schema):", "", "```json",
-                      json.dumps(info["params"], separators=(",", ":")), "```", "", "Inputs:", "",
-                      *(inputs or ["none"]), "", "Outputs:", "", *outputs, ""])
+    return "\n".join([f"### {name}", "", info["description"], "", f"Modality: {info['modality']}", "", "Params (JSON schema):",
+                      "", "```json",
+                      json.dumps(info["params"], separators=(",", ":")), "```", "", "Outputs:", "", *outputs, ""])
 
 
 class Api:
@@ -149,11 +124,14 @@ class Api:
         self._local, self._cloud = local_queue, cloud_queue
         self._jobs = {name: load_job(name) for name in job_names()}
         self._schema = {name: describe(job_class) for name, job_class in self._jobs.items()}
+        # The extensions of all file params of all jobs: the extensions an upload may have.
+        self._uploads = sorted({extension for job_class in self._jobs.values()
+                                for extensions in job_class.file_params().values() for extension in extensions})
         pynvml.nvmlInit()
         self._gpu = pynvml.nvmlDeviceGetHandleByIndex(0)
         guide = Path(__file__).with_name("usage.md").read_text(encoding="utf-8")
-        limits = {"UPLOADS": _uploads(), "SEED_MAX": SEED_MAX, "WAIT_MAX": WAIT_MAX, "PAGE_MAX": PAGE_MAX,
-                  "PAGE_SIZE": PAGE_SIZE}
+        limits = {"UPLOADS": ", ".join(self._uploads), "SEED_MAX": SEED_MAX, "WAIT_MAX": WAIT_MAX, "PAGE_MAX": PAGE_MAX,
+                  "PAGE_SIZE": PAGE_SIZE, "SPEND_REFRESH_SECONDS": SPEND_REFRESH_SECONDS}
         for key, value in limits.items():
             guide = guide.replace("{{" + key + "}}", str(value))
         self._guide = guide + "\n".join(_job_section(name, info) for name, info in self._schema.items())
@@ -199,15 +177,13 @@ class Api:
     # Files.
 
     async def upload_file(self, file: UploadFile):
-        kind = UPLOAD_KINDS.get(Path(file.filename).suffix.lower())
-        if kind is None:
-            raise Refusal(400, f"{file.filename}: this extension is not accepted; upload a file of one of these "
-                               f"types: {_uploads()}")
-        return self._store.add_upload(file.filename, kind, await file.read())
+        if Path(file.filename).suffix.lower() not in self._uploads:
+            raise Refusal(400, f"{file.filename}: this extension is not accepted; upload a file with one of these "
+                               f"extensions: {', '.join(self._uploads)}")
+        return self._store.add_upload(file.filename, await file.read())
 
-    async def list_files(self, kind: Literal["image", "mesh", "audio"] | None = None,
-                         origin: Literal["upload", "output"] | None = None):
-        return {"files": self._store.files(kind, origin)}
+    async def list_files(self, origin: Literal["upload", "output"] | None = None):
+        return {"files": self._store.files(origin)}
 
     async def get_file(self, file_id: str):
         return self._found(self._store.file(file_id), "file", file_id, "GET /api/files")
@@ -227,7 +203,7 @@ class Api:
 
     async def list_jobs(self, status: Status | None = None, job: str | None = None, batch_id: str | None = None,
                         before: int | None = None, limit: Annotated[int, Query(ge=1, le=PAGE_MAX)] = PAGE_SIZE):
-        jobs = self._store.jobs(status, job, batch_id, before, limit)
+        jobs = self._store.jobs(status, None if job is None else job.split(","), batch_id, before, limit)
         return {"jobs": self._views(jobs), "next_before": jobs[-1]["seq"] if len(jobs) == limit else None}
 
     async def get_job(self, job_id: str, wait: Wait = 0):
@@ -243,14 +219,24 @@ class Api:
         self._runner.cancel(job_id)
         return self._view(job)
 
-    async def retry_job(self, job_id: str, request: RetryRequest = RetryRequest()):
+    async def retry_job(self, job_id: str):
         job = self._found(self._store.job(job_id), "job", job_id, "GET /api/jobs")
         params = job["params"]
-        if request.seed == "new" and "seed" in params:
+        if job["status"] not in FINISHED:
+            raise Refusal(409, f"job {job_id} is {job['status']}; only a job that has ended can be retried; wait for "
+                               "it to end or cancel it, then retry")
+        if job["status"] == "succeeded":
+            if "seed" not in params:
+                raise Refusal(409, f"job {job_id} succeeded and has no seed param; create a new job with "
+                                   "POST /api/jobs")
             params = {**params, "seed": "random"}
+        for name in self._jobs[job["job"]].file_params():
+            for file_id in params[name]:
+                if self._store.file(file_id) is None:
+                    raise Refusal(409, f"param {name} of job {job_id} names file {file_id}, which no longer exists; "
+                                       "create a new job with existing files")
         fields, invalid, missing = self._prepare(JobRequest(
-            job=job["job"], params=params, inputs=job["inputs"], count=job["count"], priority=job["priority"],
-            label=job["label"], notify_url=job["notify_url"]), "")
+            job=job["job"], params=params, count=job["count"], notify_url=job["notify_url"]), "")
         self._refuse(invalid, missing)
         new = self._store.create_job(**fields)
         self._runner.submit(new["job_id"])
@@ -271,7 +257,7 @@ class Api:
         results = [self._prepare(job, f"jobs[{index}]") for index, job in enumerate(request.jobs)]
         self._refuse([text for _, invalid, _ in results for text in invalid],
                      [text for _, _, missing in results for text in missing])
-        batch = self._store.create_batch(request.label, request.notify_url, [fields for fields, _, _ in results])
+        batch = self._store.create_batch(request.notify_url, [fields for fields, _, _ in results])
         for job in batch["jobs"]:
             self._runner.submit(job["job_id"])
         return {**batch, "jobs": self._views(batch["jobs"])}
@@ -288,7 +274,9 @@ class Api:
         memory = pynvml.nvmlDeviceGetMemoryInfo(self._gpu)
         ram = psutil.virtual_memory()
         return {"gpu": {"name": pynvml.nvmlDeviceGetName(self._gpu), "vram_used_gb": round(memory.used / GB, 2),
-                        "vram_total_gb": round(memory.total / GB, 2)},
+                        "vram_total_gb": round(memory.total / GB, 2),
+                        "utilization_percent": pynvml.nvmlDeviceGetUtilizationRates(self._gpu).gpu},
+                "cpu": {"percent": psutil.cpu_percent()}, "cloud": self._cloud.spend,
                 "ram": {"total_gb": round(ram.total / GB, 2), "available_gb": round(ram.available / GB, 2)},
                 "local_queue": self._local.status(), "cloud_queue": self._cloud.status()}
 
@@ -369,7 +357,8 @@ class Api:
             params = job_class.Params.model_validate(request.params).model_dump()
         except ValidationError as error:
             invalid += [f"{_path(where, 'params', *defect['loc'])}: {defect['msg']}" for defect in error.errors()]
-        invalid += self._input_defects(job_class, request.inputs, where)
+        else:
+            invalid += self._file_defects(job_class, params, where)
         commands = {}
         for kind, name in job_class.stages():
             if kind == "local":
@@ -382,29 +371,21 @@ class Api:
                    f"repository root run: {command}" for command, labels in commands.items()]
         if params is not None and params.get("seed") == "random":
             params["seed"] = random.randint(0, SEED_MAX)
-        fields = {"job": request.job, "params": params, "inputs": request.inputs, "count": request.count,
-                  "priority": request.priority, "label": request.label, "notify_url": request.notify_url}
+        fields = {"job": request.job, "params": params, "count": request.count, "notify_url": request.notify_url}
         return fields, invalid, missing
 
-    def _input_defects(self, job_class, inputs, where):
-        """The texts of the defects of `inputs` against the inputs the job declares."""
+    def _file_defects(self, job_class, params, where):
+        """The texts of the defects of the file params in the validated `params`: a file that does not exist, or whose
+        extension is not among the accepted extensions of the param."""
         defects = []
-        for name in inputs:
-            if name not in job_class.inputs:
-                defects.append(f"{_path(where, 'inputs', name)}: the job has no such input; its inputs are: "
-                               f"{', '.join(job_class.inputs) or 'none'}")
-        for name, spec in job_class.inputs.items():
-            where_input = _path(where, "inputs", name)
-            file_ids = inputs.get(name, [])
-            if not spec.minimum <= len(file_ids) <= spec.maximum:
-                defects.append(f"{where_input}: the input takes {_count(spec.minimum, spec.maximum)} {spec.kind} "
-                               f"file(s), got {len(file_ids)}")
-            for file_id in file_ids:
+        for name, extensions in job_class.file_params().items():
+            for index, file_id in enumerate(params[name]):
+                where_file = _path(where, "params", name, index)
                 file = self._store.file(file_id)
                 if file is None:
-                    defects.append(f"{where_input}: no file {file_id}; use a file_id from POST /api/files or "
+                    defects.append(f"{where_file}: no file {file_id}; use a file_id from POST /api/files or "
                                    "GET /api/files")
-                elif file["kind"] != spec.kind:
-                    defects.append(f"{where_input}: file {file_id} is {file['kind']}, the input takes {spec.kind} "
-                                   "files")
+                elif Path(file["name"]).suffix.lower() not in extensions:
+                    defects.append(f"{where_file}: file {file_id} is named {file['name']}, the param takes files with "
+                                   f"these extensions: {', '.join(extensions)}")
         return defects

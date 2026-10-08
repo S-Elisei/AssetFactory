@@ -1,13 +1,13 @@
 description: Makes a textured, UV-unwrapped mesh of one object from one image with stable-fast-3d. The background is removed first. The mesh is not cleaned.
+modality: 3d
 params:
+  image: One image of a single object. An image whose background is already transparent is used as is, its alpha being the object mask; any other image has its background removed.
   texture_resolution: Side in pixels of the base-color and normal textures.
   remesh: Topology of the output. none keeps the extracted surface and ignores target_vertex_count; triangle rebuilds an isotropic triangle mesh; quad rebuilds a quad-dominant mesh that is written as triangles.
   target_vertex_count: Approximate vertex count of the remeshed output; -1 keeps the density of the remesher. Used only when remesh is triangle or quad.
   foreground_ratio: Share of the model's square input frame that the bounding box of the object fills.
   input_elevation_deg: Elevation of the camera that took the image in degrees, positive above the object; the mesh is rotated by this angle about the horizontal axis perpendicular to the view.
   seed: Seed of the random draws; "random" picks a seed. Item i of a job with count above 1 uses the seed plus i.
-inputs:
-  image: One image of a single object. An image whose background is already transparent is used as is, its alpha being the object mask; any other image has its background removed.
 outputs:
   mesh.glb: The textured mesh, Y up, the side seen in the image facing +Z, with UVs, vertex normals, base-color and normal textures.
   image_0.png: The input image after background removal.

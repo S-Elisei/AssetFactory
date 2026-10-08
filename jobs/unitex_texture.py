@@ -3,7 +3,7 @@ from typing import Literal
 
 import numpy as np
 import trimesh
-from core.job import BaseParams, Input, Job, Seed
+from core.job import BaseParams, Files, Job, Seed
 from PIL import Image
 from pydantic import model_validator
 from trimesh.visual import TextureVisuals
@@ -25,6 +25,8 @@ def _write_glb(path, source, base_color):
 
 class UnitexTexture(Job):
     class Params(BaseParams):
+        mesh: Files([".glb"])
+        image: Files([".png", ".jpg", ".jpeg", ".webp", ".bmp"])
         delight: bool
         texture_size: Literal[1024, 2048]
         atlas: Literal["lit", "delit"]
@@ -35,8 +37,6 @@ class UnitexTexture(Job):
             if self.atlas == "delit" and not self.delight:
                 raise ValueError("atlas delit needs delight true; set delight to true or atlas to lit")
             return self
-
-    inputs = {"mesh": Input("mesh"), "image": Input("image")}
 
     async def run(self, ctx):
         p = ctx.params
@@ -52,6 +52,6 @@ class UnitexTexture(Job):
                                        for atlas, views in zip(baked["atlases"], view_sets)], seed=ctx.seed)
         glb = ctx.dir / "mesh.glb"
         await asyncio.to_thread(_write_glb, glb, mesh, filled["atlases"][1 if p.atlas == "delit" else 0])
-        ctx.output(glb, "mesh")
+        ctx.output(glb)
         for atlas in filled["atlases"]:
-            ctx.output(atlas, "image")
+            ctx.output(atlas)

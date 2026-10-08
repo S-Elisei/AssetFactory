@@ -1,4 +1,5 @@
 description: Generates a sound effect or ambience from a text prompt with Stable Audio 3 Small-SFX.
+modality: audio
 params:
   prompt: Description of the sound - source, action, space and recording character.
   duration: Length of the output in seconds.

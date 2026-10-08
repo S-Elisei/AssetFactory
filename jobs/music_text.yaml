@@ -1,4 +1,5 @@
 description: Generates a piece of music from a caption and optional lyrics with ACE-Step 1.5.
+modality: music
 params:
   caption: Description of the music - genre, mood, instruments, timbre, era, production style, vocal type and tempo feel.
   lyrics: Lyrics of the piece. Section tags such as [Verse] or [Chorus] stand on their own line. Empty lyrics give music without vocals.

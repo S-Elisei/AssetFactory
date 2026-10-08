@@ -29,7 +29,6 @@ FILES = ["model_config.json", "model.safetensors", "t5gemma-b-b-ul2/config.json"
 # File that download() writes and load() reads: model.safetensors in fp16.
 FP16_WEIGHTS = MODELS / "stableaudio" / "model.safetensors"
 DEVICE = torch.device("cuda")
-FORMATS = "WAV, FLAC or OGG"
 
 
 def download():
@@ -81,7 +80,7 @@ def run(ctx, prompt, steps, seed, duration, audio, noise_level, start_seconds, e
     model = ctx.model
     length, options = duration, {}
     if audio is not None:
-        with common.open_audio("audio", audio, FORMATS) as file:
+        with common.open_audio("audio", audio) as file:
             seconds = file.frames / file.samplerate
             clip = (file.samplerate, torch.from_numpy(file.read(dtype="float32", always_2d=True).T.copy()))
         longest = model.model_config["sample_size"] / model.model.sample_rate

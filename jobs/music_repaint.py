@@ -1,11 +1,12 @@
 from typing import Literal
 
-from core.job import BaseParams, Input, Job, Seed
+from core.job import BaseParams, Files, Job, Seed
 from pydantic import Field
 
 
 class MusicRepaint(Job):
     class Params(BaseParams):
+        audio: Files([".wav", ".flac", ".ogg", ".mp3"])
         caption: str = Field(max_length=512)
         lyrics: str = Field(max_length=4096)
         start_seconds: float = Field(ge=0, le=600)
@@ -18,8 +19,6 @@ class MusicRepaint(Job):
         shift: float = Field(ge=1.0, le=5.0)
         seed: Seed
 
-    inputs = {"audio": Input("audio")}
-
     async def run(self, ctx):
         p = ctx.params
         result = await ctx.local("acestep", caption=p.caption, lyrics=p.lyrics, duration=None, bpm=None,
@@ -27,4 +26,4 @@ class MusicRepaint(Job):
                                  rewrite_caption=False, lm_temperature=None, steps=p.steps, shift=p.shift,
                                  start_seconds=p.start_seconds, end_seconds=p.end_seconds, extend_seconds=None,
                                  cover_strength=None, audio=ctx.file("audio"), seed=ctx.seed)
-        ctx.output(result["audio"], "audio")
+        ctx.output(result["audio"])

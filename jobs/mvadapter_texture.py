@@ -3,7 +3,7 @@ from typing import Literal
 
 import numpy as np
 import trimesh
-from core.job import BaseParams, Input, Job, Seed
+from core.job import BaseParams, Files, Job, Seed
 from PIL import Image
 from pydantic import Field
 from trimesh.visual import TextureVisuals
@@ -25,12 +25,12 @@ def _write_glb(path, source, base_color):
 
 class MvadapterTexture(Job):
     class Params(BaseParams):
+        mesh: Files([".glb"])
+        image: Files([".png", ".jpg", ".jpeg", ".webp", ".bmp"])
         steps: int = Field(ge=4, le=50)
         guidance_scale: float = Field(ge=1.0, le=10.0)
         texture_resolution: Literal[1024, 2048]
         seed: Seed
-
-    inputs = {"mesh": Input("mesh"), "image": Input("image")}
 
     async def run(self, ctx):
         p = ctx.params
@@ -45,6 +45,6 @@ class MvadapterTexture(Job):
         atlas = filled["atlases"][0]
         glb = ctx.dir / "mesh.glb"
         await asyncio.to_thread(_write_glb, glb, mesh, atlas)
-        ctx.output(glb, "mesh")
-        ctx.output(atlas, "image")
-        ctx.output(image, "image")
+        ctx.output(glb)
+        ctx.output(atlas)
+        ctx.output(image)

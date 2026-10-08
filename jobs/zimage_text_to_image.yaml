@@ -1,4 +1,5 @@
 description: Generates one image from a text prompt with Z-Image-Turbo.
+modality: image
 params:
   prompt: Description of the image in natural language, English or Chinese.
   width: Output width in pixels.

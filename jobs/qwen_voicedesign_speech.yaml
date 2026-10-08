@@ -1,4 +1,5 @@
 description: Speaks one line of text with Qwen3-TTS 1.7B VoiceDesign in a voice created from a description.
+modality: speech
 params:
   text: The line to speak, written as it should be pronounced.
   voice_description: Description of the voice and delivery - gender, age, pitch, timbre, pace, emotion, accent. An empty value lets the model pick a voice.

@@ -14,4 +14,4 @@ class Flux2TextToImage(Job):
         p = ctx.params
         result = await ctx.local("flux2", prompt=p.prompt, width=p.width, height=p.height, steps=p.steps,
                                  seed=ctx.seed, reference_images=[])
-        ctx.output(result["image"], "image")
+        ctx.output(result["image"])

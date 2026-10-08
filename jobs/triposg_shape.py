@@ -1,18 +1,17 @@
 from typing import Literal
 
-from core.job import BaseParams, Input, Job, Seed
+from core.job import BaseParams, Files, Job, Seed
 from pydantic import Field
 
 
 class TriposgShape(Job):
     class Params(BaseParams):
+        image: Files([".png", ".jpg", ".jpeg", ".webp", ".bmp"])
         steps: int = Field(ge=8, le=100)
         guidance_scale: float = Field(ge=0.0, le=20.0)
         octree_depth: Literal[8, 9]
         target_faces: int
         seed: Seed
-
-    inputs = {"image": Input("image")}
 
     async def run(self, ctx):
         p = ctx.params
@@ -22,5 +21,5 @@ class TriposgShape(Job):
         mesh = (await ctx.local("clean", mesh=raw["mesh"]))["mesh"]
         if p.target_faces > 0:
             mesh = (await ctx.local("decimate", mesh=mesh, target_faces=p.target_faces))["mesh"]
-        ctx.output(mesh, "mesh")
-        ctx.output(image, "image")
+        ctx.output(mesh)
+        ctx.output(image)

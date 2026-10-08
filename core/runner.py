@@ -105,8 +105,8 @@ class Runner:
 
     async def _run_items(self, job, job_class):
         params = job_class.Params(**job["params"])
-        inputs = {name: [self._store.file(file_id)["path"] for file_id in job["inputs"].get(name, [])]
-                  for name in job_class.inputs}
+        files = {name: [self._store.file(file_id)["path"] for file_id in job["params"][name]]
+                 for name in job_class.file_params()}
         stage_count = len(job_class.stages())
         progress = self._progress[job["job_id"]]
 
@@ -119,8 +119,9 @@ class Runner:
             self.publish(job["job_id"])
 
         async def run_item(item):
-            context = Context(self._store, self._local, self._cloud, job, params, inputs, item, stage_count, report)
+            context = Context(self._store, self._local, self._cloud, job, params, files, item, stage_count, report)
             await job_class().run(context)
+            context.register_outputs()
             report(item, 1.0, "done")
 
         items = [asyncio.create_task(run_item(item)) for item in range(job["count"])]

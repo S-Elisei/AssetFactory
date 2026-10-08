@@ -1,11 +1,11 @@
 description: Regenerates the region between start_seconds and end_seconds of a sound clip from a prompt with Stable Audio 3 Small-SFX and keeps the rest. The output has the length of the clip.
+modality: audio
 params:
+  audio: The source clip.
   prompt: Description of the whole clip including the regenerated region.
   start_seconds: Start of the region in seconds from the beginning of the clip; below end_seconds and below the length of the clip.
   end_seconds: End of the region in seconds from the beginning of the clip; a value past the end of the clip is limited to the length of the clip.
   steps: Number of sampling steps.
   seed: Seed of the random draws; "random" picks a seed. Item i of a job with count above 1 uses the seed plus i.
-inputs:
-  audio: The source clip; WAV, FLAC or OGG.
 outputs:
   audio.wav: The clip with the regenerated region, 16-bit PCM WAV.

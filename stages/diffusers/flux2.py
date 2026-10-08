@@ -37,7 +37,7 @@ def _reference(number, path):
     try:
         return Image.open(path).convert("RGB")
     except OSError:
-        raise InputError(f"reference_images[{number}]: the file is not a readable image; send a PNG, JPEG or WEBP")
+        raise InputError(f"reference_images[{number}]: the file is not a readable image; send an undamaged image")
 
 
 def run(ctx, prompt, width, height, steps, seed, reference_images):

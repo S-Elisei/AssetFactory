@@ -34,7 +34,6 @@ FILES = ["ve.pt", T3_FILE, "s3gen.pt", "grapheme_mtl_merged_expanded_v1.json", "
 # Segmenter model of spacy_pkuseg that the tokenizer loads. Documented: the default of `pkuseg()`.
 SEGMENTER = "spacy_ontonotes"
 DEVICE = torch.device("cuda")
-FORMATS = "WAV, FLAC, OGG or MP3"
 # Speech tokens that one run generates at most. Documented.
 MAX_TOKENS = 1000
 
@@ -83,7 +82,7 @@ def run(ctx, text, language, exaggeration, cfg_weight, temperature, repetition_p
     if voice_reference is None:
         model.conds = ctx.model["builtin"]
     else:
-        common.open_audio("voice_reference", voice_reference, FORMATS).close()
+        common.open_audio("voice_reference", voice_reference).close()
     common.seed_everything(seed)
     tokens = 0
 

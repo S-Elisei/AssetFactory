@@ -14,11 +14,6 @@ RETRY_DELAYS = (5, 15, 60, 300)
 POST_TIMEOUT = 10
 
 
-def _reference(job):
-    label = "" if job["label"] is None else f' "{job["label"]}"'
-    return f"{job['job_id']}{label}"
-
-
 def _work(job):
     text = f"work took {job['work_seconds']:.1f} s"
     if job["cloud_dollars"] > 0:
@@ -59,7 +54,7 @@ class Notifier:
     def _notify_job(self, job):
         if job["notify_url"] is not None:
             lines = self._describe(job)
-            self._send(job["notify_url"], "\n".join([f"AssetFactory job {_reference(job)}: {lines[0]}", *lines[1:]]))
+            self._send(job["notify_url"], "\n".join([f"AssetFactory job {job['job_id']}: {lines[0]}", *lines[1:]]))
 
     def _notify_batch(self, batch_id):
         batch = self._store.batch(batch_id)
@@ -79,12 +74,11 @@ class Notifier:
 
     def _batch_text(self, batch):
         counts = Counter(job["status"] for job in batch["jobs"])
-        label = "" if batch["label"] is None else f' "{batch["label"]}"'
         summary = ", ".join(f"{counts[status]} {status}" for status in FINISHED if counts[status])
-        lines = [f"AssetFactory batch {batch['batch_id']}{label} finished: {summary}."]
+        lines = [f"AssetFactory batch {batch['batch_id']} finished: {summary}."]
         for job in batch["jobs"]:
             job_lines = self._describe(job)
-            lines += [f"- {_reference(job)}: {job_lines[0]}", *[f"  {line}" for line in job_lines[1:]]]
+            lines += [f"- {job['job_id']}: {job_lines[0]}", *[f"  {line}" for line in job_lines[1:]]]
         return "\n".join(lines)
 
     def _send(self, url, text):

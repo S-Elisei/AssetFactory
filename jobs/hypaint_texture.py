@@ -3,7 +3,7 @@ from typing import Literal
 
 import numpy as np
 import trimesh
-from core.job import BaseParams, Input, Job, Seed
+from core.job import BaseParams, Files, Job, Seed
 from PIL import Image
 from trimesh.visual import TextureVisuals
 from trimesh.visual.material import PBRMaterial
@@ -24,11 +24,11 @@ def _write_glb(path, source, base_color):
 
 class HypaintTexture(Job):
     class Params(BaseParams):
+        mesh: Files([".glb"])
+        image: Files([".png", ".jpg", ".jpeg", ".webp", ".bmp"])
         texture_resolution: Literal[512, 1024, 2048]
         delight: bool
         seed: Seed
-
-    inputs = {"mesh": Input("mesh"), "image": Input("image")}
 
     async def run(self, ctx):
         p = ctx.params
@@ -38,6 +38,6 @@ class HypaintTexture(Job):
                                    texture_resolution=p.texture_resolution, delight=p.delight, seed=ctx.seed)
         glb = ctx.dir / "mesh.glb"
         await asyncio.to_thread(_write_glb, glb, mesh, textures["base_color"])
-        ctx.output(glb, "mesh")
-        ctx.output(textures["base_color"], "image")
-        ctx.output(image, "image")
+        ctx.output(glb)
+        ctx.output(textures["base_color"])
+        ctx.output(image)

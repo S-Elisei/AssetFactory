@@ -29,4 +29,4 @@ class QwenVoicedesignSpeech(Job):
                                  subtalker_dosample=p.subtalker_dosample,
                                  subtalker_temperature=p.subtalker_temperature, subtalker_top_k=p.subtalker_top_k,
                                  subtalker_top_p=p.subtalker_top_p, max_new_tokens=p.max_new_tokens, seed=ctx.seed)
-        ctx.output(result["audio"], "audio")
+        ctx.output(result["audio"])

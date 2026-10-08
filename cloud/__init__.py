@@ -103,7 +103,7 @@ def read_image(data):
         image = Image.open(io.BytesIO(data))
         image.load()
     except OSError:
-        raise InputError("image: the file is not a readable image; send a PNG, JPEG or WEBP")
+        raise InputError("image: the file is not a readable image; send an undamaged image")
     return image
 
 

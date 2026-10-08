@@ -82,7 +82,7 @@ def run(ctx, images):
                 image = Image.open(source)
                 image.load()
             except OSError:
-                raise InputError("an input image is not a readable image; send a PNG, JPEG or WEBP")
+                raise InputError("an input image is not a readable image; send an undamaged image")
             path = ctx.dir / f"image_{number}.png"
             remove_background(ctx.model, image).save(path)
             paths.append(str(path))

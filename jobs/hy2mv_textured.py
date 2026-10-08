@@ -3,7 +3,7 @@ from typing import Literal
 
 import numpy as np
 import trimesh
-from core.job import BaseParams, Input, Job, Seed
+from core.job import BaseParams, Files, Job, Seed
 from PIL import Image
 from pydantic import Field
 from trimesh.visual import TextureVisuals
@@ -28,6 +28,10 @@ def _write_glb(path, source, base_color, normal_map):
 
 class Hy2mvTextured(Job):
     class Params(BaseParams):
+        front: Files([".png", ".jpg", ".jpeg", ".webp", ".bmp"])
+        left: Files([".png", ".jpg", ".jpeg", ".webp", ".bmp"], 0, 1)
+        back: Files([".png", ".jpg", ".jpeg", ".webp", ".bmp"], 0, 1)
+        right: Files([".png", ".jpg", ".jpeg", ".webp", ".bmp"], 0, 1)
         steps: int = Field(ge=1, le=30)
         guidance_scale: float = Field(ge=1.0, le=15.0)
         octree_resolution: int = Field(ge=64, le=384)
@@ -38,12 +42,9 @@ class Hy2mvTextured(Job):
         normal_map: bool
         seed: Seed
 
-    inputs = {"front": Input("image"), "left": Input("image", 0, 1), "back": Input("image", 0, 1),
-              "right": Input("image", 0, 1)}
-
     async def run(self, ctx):
         p = ctx.params
-        sent = {name: paths[0] for name, paths in ctx.inputs.items() if paths}
+        sent = {name: paths[0] for name, paths in ctx.files.items() if paths}
         images = (await ctx.local("bgremove", images=list(sent.values())))["images"]
         views = dict(zip(sent, images))
         raw = await ctx.local("hy2mv", front=views["front"], left=views.get("left"), back=views.get("back"),
@@ -59,9 +60,9 @@ class Hy2mvTextured(Job):
                                    texture_resolution=p.texture_resolution, delight=p.delight, seed=ctx.seed)
         glb = ctx.dir / "mesh.glb"
         await asyncio.to_thread(_write_glb, glb, unwrapped, textures["base_color"], textures["normal_map"])
-        ctx.output(glb, "mesh")
-        ctx.output(textures["base_color"], "image")
+        ctx.output(glb)
+        ctx.output(textures["base_color"])
         if p.normal_map:
-            ctx.output(textures["normal_map"], "image")
+            ctx.output(textures["normal_map"])
         for image in images:
-            ctx.output(image, "image")
+            ctx.output(image)

@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AssetFactory</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="app.css">
+<script src="vendor/model-viewer-umd.min.js" defer></script>
+<script src="app.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <div class="brand">AssetFactory</div>
+  <div class="loads">
+    <div class="load" id="load-ram"><b>RAM</b><div class="bar"><div style="width:0%"></div></div><span class="muted"></span></div>
+    <div class="load" id="load-vram"><b>VRAM</b><div class="bar"><div style="width:0%"></div></div><span class="muted"></span></div>
+    <div class="load" id="load-cpu"><b>CPU</b><div class="bar"><div style="width:0%"></div></div><span class="muted"></span></div>
+    <div class="load" id="load-gpu"><b>GPU</b><div class="bar"><div style="width:0%"></div></div><span class="muted"></span></div>
+    <span class="muted small" id="credits"></span>
+  </div>
+</header>
+<main class="page" id="page">
+  <section id="queue">
+    <div class="row" style="margin-bottom:12px"><h2 class="grow" style="margin:0" id="queue-title">Queue (0)</h2><button id="new">New</button></div>
+    <div class="panel" id="queue-list"><div class="muted">Empty</div></div>
+  </section>
+  <section id="history">
+    <div class="row" style="margin-bottom:12px"><h2 style="margin:0">History</h2>
+      <select id="f-model"></select>
+      <select id="f-task" disabled></select>
+      <select id="f-status">
+        <option value="" selected>all statuses</option>
+        <option value="running">running</option>
+        <option value="succeeded">succeeded</option>
+        <option value="failed">failed</option>
+        <option value="cancelled">cancelled</option>
+      </select>
+      <button class="ghost small" id="f-reset">Reset</button></div>
+    <div id="hist-list"></div>
+    <button class="ghost hidden" id="more">Load more</button>
+  </section>
+</main>
+<div id="toasts"></div>
+<div id="modal" class="modal hidden"><button id="modal-close" title="Close">×</button><div class="modal-box"><div id="modal-body"></div></div></div>
+</body>
+</html>

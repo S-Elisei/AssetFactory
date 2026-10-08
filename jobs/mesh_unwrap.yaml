@@ -1,6 +1,6 @@
 description: UV-unwraps one mesh. The vertices of equal positions are welded; positions and faces are kept. The charts are packed without overlapping texels.
-params: {}
-inputs:
+modality: 3d
+params:
   mesh: One GLB with a triangle mesh; all triangle meshes of the scene are merged into one, and materials, textures, UVs and vertex colors are discarded.
 outputs:
   mesh.glb: The mesh with UVs and welded vertex normals, without texture.

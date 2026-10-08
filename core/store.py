@@ -2,14 +2,13 @@
 one asyncio loop; there is one connection. The schema is created when the database file does not exist.
 
 Files. `data/files/<file_id><suffix>` holds an upload; `data/jobs/<job_id>/` is the folder of a job and holds its
-outputs, wherever below it they lie. A file row: file_id, kind, origin (`upload` when job_id is None, else `output`),
-name, path (absolute), size, created, job_id and item (None for an upload). `kind` is opaque to the Store.
+outputs, wherever below it they lie. A file row: file_id, origin (`upload` when job_id is None, else `output`), name,
+path (absolute), size, created, job_id and item (None for an upload).
 
-Jobs. A job row: seq (the paging cursor), job_id, job (the file name of its module in `jobs/`), params (dict), inputs
-(dict of input name to the list of its file_ids), count, priority, label, notify_url, batch_id, status, error (None,
-or a dict with `kind` and `message`), outputs (per item of `count`, the list of the file_ids of that item), created,
-started, finished (epoch seconds, None until they happen), work_seconds and cloud_dollars. Statuses: queued, running,
-then one of FINISHED. Methods that take a job_id or a file_id require an id that exists; `job`, `file` and `batch`
+Jobs. A job row: seq (the paging cursor), job_id, job (the file name of its module in `jobs/`), params (dict, the
+file_ids of the file params included), count, notify_url, batch_id, status, error (None, or a dict with `kind` and
+`message`), outputs (per item of `count`, the list of the file_ids of that item), created, started, finished (epoch
+seconds, None until they happen), work_seconds and cloud_dollars. Statuses: queued, running, then one of FINISHED. Methods that take a job_id or a file_id require an id that exists; `job`, `file` and `batch`
 return None for an unknown id."""
 import json
 import shutil
@@ -18,6 +17,7 @@ import time
 import uuid
 from pathlib import Path
 
+from core.job import load_job
 from core.layout import DATA
 
 FINISHED = ("succeeded", "failed", "cancelled")
@@ -25,7 +25,6 @@ FINISHED = ("succeeded", "failed", "cancelled")
 SCHEMA = """
 CREATE TABLE batches (
     batch_id TEXT PRIMARY KEY,
-    label TEXT,
     notify_url TEXT,
     created REAL NOT NULL
 );
@@ -34,10 +33,7 @@ CREATE TABLE jobs (
     job_id TEXT NOT NULL UNIQUE,
     job TEXT NOT NULL,
     params TEXT NOT NULL,
-    inputs TEXT NOT NULL,
     count INTEGER NOT NULL,
-    priority INTEGER NOT NULL,
-    label TEXT,
     notify_url TEXT,
     batch_id TEXT,
     status TEXT NOT NULL,
@@ -53,7 +49,6 @@ CREATE INDEX jobs_batch ON jobs (batch_id);
 CREATE TABLE files (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
     file_id TEXT NOT NULL UNIQUE,
-    kind TEXT NOT NULL,
     name TEXT NOT NULL,
     path TEXT NOT NULL,
     size INTEGER NOT NULL,
@@ -86,33 +81,28 @@ class Store:
 
     # Files.
 
-    def add_upload(self, name, kind, content):
+    def add_upload(self, name, content):
         """Writes `content` (bytes) as an upload named `name` and returns its file row."""
         name = Path(name).name
         file_id = _new_id("f")
         path = DATA / "files" / f"{file_id}{Path(name).suffix}"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(content)
-        return self._insert_file(file_id, kind, name, path, None, None)
+        return self._insert_file(file_id, name, path, None, None)
 
-    def add_output(self, job_id, item, path, kind):
+    def add_output(self, job_id, item, path, name):
         """Registers the existing file `path`, which lies below `job_dir(job_id)`, as an output of item `item` of the
-        job, named by its file name. Returns its file row."""
-        return self._insert_file(_new_id("f"), kind, path.name, path, job_id, item)
+        job, named `name`. Returns its file row."""
+        return self._insert_file(_new_id("f"), name, path, job_id, item)
 
     def file(self, file_id):
         row = self._db.execute("SELECT * FROM files WHERE file_id = ?", (file_id,)).fetchone()
         return None if row is None else self._file(row)
 
-    def files(self, kind=None, origin=None):
-        """The file rows with the given kind and origin, newest first."""
-        where, args = [], []
-        if kind is not None:
-            where.append("kind = ?")
-            args.append(kind)
-        if origin is not None:
-            where.append("job_id IS NULL" if origin == "upload" else "job_id IS NOT NULL")
-        return [self._file(row) for row in self._newest_first("files", where, args, -1)]
+    def files(self, origin=None):
+        """The file rows with the given origin, newest first."""
+        where = [] if origin is None else ["job_id IS NULL" if origin == "upload" else "job_id IS NOT NULL"]
+        return [self._file(row) for row in self._newest_first("files", where, [], -1)]
 
     def output_files(self, job_id):
         """The file rows of the outputs of the job, ordered by item, then by registration."""
@@ -125,10 +115,10 @@ class Store:
         """The folder of the job; it exists from the creation of the job to its deletion."""
         return DATA / "jobs" / job_id
 
-    def create_job(self, job, params, inputs, count, priority, label, notify_url):
+    def create_job(self, job, params, count, notify_url):
         """Inserts a queued job with the given fields and returns its row."""
         with self._db:
-            job_id = self._insert_job(job, params, inputs, count, priority, label, notify_url, None)
+            job_id = self._insert_job(job, params, count, notify_url, None)
         return self.job(job_id)
 
     def job(self, job_id):
@@ -136,13 +126,17 @@ class Store:
         return None if row is None else self._job(row)
 
     def jobs(self, status=None, job=None, batch_id=None, before=None, limit=50):
-        """Up to `limit` job rows, newest first, with the given status, job and batch_id; those with a `seq` below
-        `before` when it is given. The `seq` of the last row is the `before` of the next page."""
+        """Up to `limit` job rows, newest first, with the given status and batch_id and one of the job names in the list
+        `job`; those with a `seq` below `before` when it is given. The `seq` of the last row is the `before` of the next
+        page."""
         where, args = [], []
-        for column, value in (("status", status), ("job", job), ("batch_id", batch_id)):
+        for column, value in (("status", status), ("batch_id", batch_id)):
             if value is not None:
                 where.append(f"{column} = ?")
                 args.append(value)
+        if job is not None:
+            where.append(f"job IN ({', '.join('?' * len(job))})")
+            args += job
         if before is not None:
             where.append("seq < ?")
             args.append(before)
@@ -168,14 +162,14 @@ class Store:
 
     def delete_job(self, job_id):
         """Deletes a finished job with its output rows and its folder. Raises Refused when the job is not finished, or
-        when an output of it is an input of a queued or running job."""
+        when an output of it is in a file param of a queued or running job."""
         job = self.job(job_id)
         if job["status"] not in FINISHED:
             raise Refused(f"job {job_id} is {job['status']}; cancel it, then delete it")
         outputs = {file_id for item in job["outputs"] for file_id in item}
-        rows = self._db.execute("SELECT job_id, inputs FROM jobs WHERE status IN ('queued', 'running')")
+        rows = self._db.execute("SELECT job_id, job, params FROM jobs WHERE status IN ('queued', 'running')")
         users = [row["job_id"] for row in rows
-                 if outputs & {file_id for ids in json.loads(row["inputs"]).values() for file_id in ids}]
+                 if outputs & load_job(row["job"]).file_ids(json.loads(row["params"]))]
         if users:
             raise Refused(f"outputs of job {job_id} are inputs of the unfinished jobs {', '.join(users)}; "
                           "wait for them or cancel them, then delete")
@@ -196,19 +190,18 @@ class Store:
 
     # Batches.
 
-    def create_batch(self, label, notify_url, jobs):
+    def create_batch(self, notify_url, jobs):
         """Inserts a batch and its queued jobs in one transaction. `jobs` is a list of dicts with the keyword arguments
         of `create_job`. Returns the batch."""
         batch_id = _new_id("b")
         with self._db:
-            self._db.execute("INSERT INTO batches VALUES (?, ?, ?, ?)", (batch_id, label, notify_url, time.time()))
+            self._db.execute("INSERT INTO batches VALUES (?, ?, ?)", (batch_id, notify_url, time.time()))
             for fields in jobs:
                 self._insert_job(**fields, batch_id=batch_id)
         return self.batch(batch_id)
 
     def batch(self, batch_id):
-        """The batch as a dict with batch_id, label, notify_url, created and `jobs`: the rows of its jobs, oldest
-        first."""
+        """The batch as a dict with batch_id, notify_url, created and `jobs`: the rows of its jobs, oldest first."""
         row = self._db.execute("SELECT * FROM batches WHERE batch_id = ?", (batch_id,)).fetchone()
         if row is None:
             return None
@@ -217,20 +210,19 @@ class Store:
 
     # Internals.
 
-    def _insert_file(self, file_id, kind, name, path, job_id, item):
+    def _insert_file(self, file_id, name, path, job_id, item):
         with self._db:
-            self._db.execute("INSERT INTO files (file_id, kind, name, path, size, created, job_id, item) "
-                             "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                             (file_id, kind, name, path.relative_to(DATA).as_posix(),
+            self._db.execute("INSERT INTO files (file_id, name, path, size, created, job_id, item) "
+                             "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                             (file_id, name, path.relative_to(DATA).as_posix(),
                               path.stat().st_size, time.time(), job_id, item))
         return self.file(file_id)
 
-    def _insert_job(self, job, params, inputs, count, priority, label, notify_url, batch_id):
+    def _insert_job(self, job, params, count, notify_url, batch_id):
         job_id = _new_id("j")
-        self._db.execute("INSERT INTO jobs (job_id, job, params, inputs, count, priority, label, notify_url, "
-                         "batch_id, status, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)",
-                         (job_id, job, json.dumps(params), json.dumps(inputs), count, priority, label,
-                          notify_url, batch_id, time.time()))
+        self._db.execute("INSERT INTO jobs (job_id, job, params, count, notify_url, batch_id, status, created) "
+                         "VALUES (?, ?, ?, ?, ?, ?, 'queued', ?)",
+                         (job_id, job, json.dumps(params), count, notify_url, batch_id, time.time()))
         self.job_dir(job_id).mkdir(parents=True)
         return job_id
 
@@ -248,7 +240,6 @@ class Store:
     def _job(self, row):
         job = dict(row)
         job["params"] = json.loads(job["params"])
-        job["inputs"] = json.loads(job["inputs"])
         kind, message = job.pop("error_kind"), job.pop("error_message")
         job["error"] = None if kind is None else {"kind": kind, "message": message}
         job["outputs"] = [[] for _ in range(job["count"])]

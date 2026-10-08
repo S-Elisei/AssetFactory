@@ -62,7 +62,7 @@ def _source_image(path):
     try:
         source = Image.open(path).convert("RGB")
     except OSError:
-        raise InputError("image: the file is not a readable image; send a PNG, JPEG or WEBP")
+        raise InputError("image: the file is not a readable image; send an undamaged image")
     scale = min(max(max(source.size), MIN_SIDE), MAX_SIDE) / max(source.size)
     size = tuple(round(side * scale / 16) * 16 for side in source.size)
     return source if size == source.size else source.resize(size, Image.Resampling.LANCZOS)

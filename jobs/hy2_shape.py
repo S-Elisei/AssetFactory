@@ -1,17 +1,16 @@
-from core.job import BaseParams, Input, Job, Seed
+from core.job import BaseParams, Files, Job, Seed
 from pydantic import Field
 
 
 class Hy2Shape(Job):
     class Params(BaseParams):
+        image: Files([".png", ".jpg", ".jpeg", ".webp", ".bmp"])
         steps: int = Field(ge=1, le=30)
         guidance_scale: float = Field(ge=1.0, le=15.0)
         octree_resolution: int = Field(ge=64, le=384)
         num_chunks: int = Field(ge=1000, le=200000)
         target_faces: int
         seed: Seed
-
-    inputs = {"image": Input("image")}
 
     async def run(self, ctx):
         p = ctx.params
@@ -21,5 +20,5 @@ class Hy2Shape(Job):
         mesh = (await ctx.local("clean", mesh=raw["mesh"]))["mesh"]
         if p.target_faces > 0:
             mesh = (await ctx.local("decimate", mesh=mesh, target_faces=p.target_faces))["mesh"]
-        ctx.output(mesh, "mesh")
-        ctx.output(image, "image")
+        ctx.output(mesh)
+        ctx.output(image)

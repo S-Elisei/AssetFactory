@@ -14,4 +14,4 @@ class ZimageTextToImage(Job):
         p = ctx.params
         result = await ctx.local("zimage", prompt=p.prompt, steps=p.steps, seed=ctx.seed, width=p.width,
                                  height=p.height, image=None, strength=None)
-        ctx.output(result["image"], "image")
+        ctx.output(result["image"])

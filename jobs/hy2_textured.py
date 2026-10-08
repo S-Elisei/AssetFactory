@@ -3,7 +3,7 @@ from typing import Literal
 
 import numpy as np
 import trimesh
-from core.job import BaseParams, Input, Job, Seed
+from core.job import BaseParams, Files, Job, Seed
 from PIL import Image
 from pydantic import Field
 from trimesh.visual import TextureVisuals
@@ -28,6 +28,7 @@ def _write_glb(path, source, base_color, normal_map):
 
 class Hy2Textured(Job):
     class Params(BaseParams):
+        image: Files([".png", ".jpg", ".jpeg", ".webp", ".bmp"])
         steps: int = Field(ge=1, le=30)
         guidance_scale: float = Field(ge=1.0, le=15.0)
         octree_resolution: int = Field(ge=64, le=384)
@@ -37,8 +38,6 @@ class Hy2Textured(Job):
         delight: bool
         normal_map: bool
         seed: Seed
-
-    inputs = {"image": Input("image")}
 
     async def run(self, ctx):
         p = ctx.params
@@ -55,8 +54,8 @@ class Hy2Textured(Job):
                                    texture_resolution=p.texture_resolution, delight=p.delight, seed=ctx.seed)
         glb = ctx.dir / "mesh.glb"
         await asyncio.to_thread(_write_glb, glb, unwrapped, textures["base_color"], textures["normal_map"])
-        ctx.output(glb, "mesh")
-        ctx.output(textures["base_color"], "image")
+        ctx.output(glb)
+        ctx.output(textures["base_color"])
         if p.normal_map:
-            ctx.output(textures["normal_map"], "image")
-        ctx.output(image, "image")
+            ctx.output(textures["normal_map"])
+        ctx.output(image)

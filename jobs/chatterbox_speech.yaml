@@ -1,5 +1,7 @@
 description: Speaks one line of text with Chatterbox Multilingual V3, in the built-in voice or in a voice cloned from a voice reference.
+modality: speech
 params:
+  voice_reference: Recording of the voice to clone, one speaker. With the empty list the built-in voice speaks.
   text: The line to speak, written as it should be pronounced.
   language: Language code of the text.
   exaggeration: Emotion intensity. Higher values make the delivery more intense and faster.
@@ -9,7 +11,5 @@ params:
   min_p: Min-p filter of the sampling; 0 disables it.
   top_p: Nucleus filter of the sampling; 1.0 disables it.
   seed: Seed of the random draws; "random" picks a seed. Item i of a job with count above 1 uses the seed plus i.
-inputs:
-  voice_reference: Recording of the voice to clone, one speaker; WAV, FLAC, OGG or MP3. Without it the built-in voice speaks.
 outputs:
   speech.wav: The spoken line, mono 16-bit PCM WAV.

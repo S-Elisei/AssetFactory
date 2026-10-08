@@ -45,7 +45,6 @@ FILES = ["acestep-v15-turbo/config.json", "acestep-v15-turbo/model.safetensors",
          "vae/*", "Qwen3-Embedding-0.6B/*", "acestep-5Hz-lm-1.7B/*"]
 DEVICE = torch.device("cuda")
 DTYPE = torch.bfloat16
-FORMATS = "WAV, FLAC, OGG or MP3"
 # Fractions of a run's progress at which the diffusion steps start and end. Documented.
 DIFFUSION_START, DIFFUSION_END = 0.52, 0.79
 
@@ -184,7 +183,7 @@ def run(ctx, caption, lyrics, duration, bpm, keyscale, timesignature, vocal_lang
                            lm_temperature=lm_temperature)
             llm = _llm(ctx)
     else:
-        with common.open_audio("audio", audio, FORMATS) as file:
+        with common.open_audio("audio", audio) as file:
             source = file.frames / file.samplerate
         if source > DURATION_MAX:
             raise InputError(f"audio: the source is {source:.1f} s long; send a source of at most {DURATION_MAX} s")

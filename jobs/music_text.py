@@ -36,4 +36,4 @@ class MusicText(Job):
                                  rewrite_caption=p.rewrite_caption, lm_temperature=p.lm_temperature,
                                  steps=p.steps, shift=p.shift, start_seconds=None, end_seconds=None,
                                  extend_seconds=None, cover_strength=None, audio=None, seed=ctx.seed)
-        ctx.output(result["audio"], "audio")
+        ctx.output(result["audio"])

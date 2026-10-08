@@ -1,5 +1,7 @@
 description: Re-renders a music track in the style of a caption with ACE-Step 1.5, keeping its length and structure.
+modality: music
 params:
+  audio: The source track.
   caption: Description of the target style.
   lyrics: Lyrics of the new version. Section tags such as [Verse] or [Chorus] stand on their own line. Empty lyrics give music without vocals.
   cover_strength: Share of the diffusion steps that are conditioned on the track; the other steps follow the caption and the lyrics. At 1.0 every step sees the track, at 0.0 none does.
@@ -7,7 +9,5 @@ params:
   steps: Number of diffusion steps.
   shift: Timestep shift of the diffusion schedule; higher values spend more of the steps at high noise levels, 1.0 leaves the schedule linear.
   seed: Seed of the random draws; "random" picks a seed. Item i of a job with count above 1 uses the seed plus i.
-inputs:
-  audio: The source track; WAV, FLAC, OGG or MP3.
 outputs:
   music.wav: The new version, stereo 16-bit PCM WAV.
