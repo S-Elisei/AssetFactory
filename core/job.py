@@ -8,6 +8,7 @@ A job is the module `jobs/<name>.py` with the file `jobs/<name>.yaml` next to it
 - `outputs`: one line per output file, named by its file name."""
 import ast
 import importlib
+import json
 import inspect
 import re
 import textwrap
@@ -16,15 +17,29 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from core.layout import ROOT
 
 
 class BaseParams(BaseModel):
     """The base of the `Params` of a job: the names of the fields are the names of the params, and no other name is
-    accepted."""
+    accepted. A param whose JSON schema has `"x-requires": {value: {other param: its value}}` accepts that value only
+    when every named other param has the named value."""
     model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def _requires(self):
+        for name, field in type(self).model_fields.items():
+            requires = (field.json_schema_extra or {}).get("x-requires")
+            if requires is None:
+                continue
+            value = getattr(self, name)
+            for other, needed in requires.get(value, {}).items():
+                if getattr(self, other) != needed:
+                    raise ValueError(f"{name} {json.dumps(value)} needs {other} {json.dumps(needed)}; set {other} to "
+                                     f"{json.dumps(needed)} or choose another {name}")
+        return self
 
 
 # The largest integer seed.

@@ -7,6 +7,8 @@ from context import InputError
 
 # Candidate texels tested per chunk of uv_overlap_texels.
 CHUNK_TEXELS = 2_000_000
+# Largest share of the covered texel centers that may lie inside more than one UV triangle. Guessed.
+OVERLAP_SHARE = 1e-3
 
 
 def load_glb(path):
@@ -22,7 +24,8 @@ def load_glb(path):
 def load_input_mesh(path, uv_size=None):
     """Returns (vertices, faces, uv) of the GLB `path` as load_glb does. Raises InputError when the file is not a readable
     GLB or holds no triangle. With `uv_size` it also raises InputError when the mesh has no UVs or when texel centers of
-    a `uv_size` x `uv_size` texture lie inside more than one UV triangle."""
+    a `uv_size` x `uv_size` texture lie inside more than one UV triangle in a share above OVERLAP_SHARE of the
+    covered texel centers."""
     try:
         vertices, faces, uv = load_glb(path)
     except Exception:
@@ -34,10 +37,10 @@ def load_input_mesh(path, uv_size=None):
     if uv is None:
         raise InputError("mesh: the GLB has no UV coordinates (TEXCOORD_0); run mesh_unwrap on it first and send its "
                          "output")
-    overlap = uv_overlap_texels(uv, faces, uv_size)
-    if overlap:
-        raise InputError(f"mesh: {overlap} texels of the {uv_size} x {uv_size} texture lie inside more than one UV "
-                         "triangle; run mesh_unwrap on it first and send its output")
+    overlap, covered = uv_overlap_texels(uv, faces, uv_size)
+    if overlap > OVERLAP_SHARE * covered:
+        raise InputError(f"mesh: {overlap} of the {covered} covered texels of the {uv_size} x {uv_size} texture lie "
+                         "inside more than one UV triangle; run mesh_unwrap on it first and send its output")
     return vertices, faces, uv
 
 
@@ -80,8 +83,9 @@ def decimate(vertices, faces, target_faces):
 
 
 def uv_overlap_texels(uv, faces, size):
-    """Number of texel centers of a size x size texture that lie strictly inside two or more UV triangles. Texel
-    centers on a shared edge, and triangles of zero area, do not count."""
+    """(overlapping, covered): the numbers of texel centers of a size x size texture that lie strictly inside two or
+    more UV triangles, and inside at least one. Texel centers on a shared edge, and triangles of zero area, do not
+    count."""
     tri = np.asarray(uv, np.float64)[faces] * size
     a, b, c = tri[:, 0], tri[:, 1], tri[:, 2]
     side = (b[:, 0] - a[:, 0]) * (c[:, 1] - a[:, 1]) - (b[:, 1] - a[:, 1]) * (c[:, 0] - a[:, 0])
@@ -108,7 +112,8 @@ def uv_overlap_texels(uv, faces, size):
             inside &= distance > 1e-6 * np.linalg.norm(edge, axis=1)
         hit.append(iy[inside] * size + ix[inside])
         start = stop
-    return int((np.bincount(np.concatenate(hit), minlength=1) >= 2).sum())
+    counts = np.bincount(np.concatenate(hit), minlength=1)
+    return int((counts >= 2).sum()), int((counts >= 1).sum())
 
 
 def write_glb(path, vertices, faces, normals, uv=None, base_color=None, normal_map=None):

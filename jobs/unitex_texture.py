@@ -1,11 +1,11 @@
 import asyncio
-from typing import Literal
+from typing import Annotated, Literal
 
 import numpy as np
 import trimesh
 from core.job import BaseParams, Files, Job, Seed
 from PIL import Image
-from pydantic import model_validator
+from pydantic import Field
 from trimesh.visual import TextureVisuals
 from trimesh.visual.material import PBRMaterial
 
@@ -29,14 +29,8 @@ class UnitexTexture(Job):
         image: Files([".png", ".jpg", ".jpeg", ".webp", ".bmp"])
         delight: bool
         texture_size: Literal[1024, 2048]
-        atlas: Literal["lit", "delit"]
+        atlas: Annotated[Literal["lit", "delit"], Field(json_schema_extra={"x-requires": {"delit": {"delight": True}}})]
         seed: Seed
-
-        @model_validator(mode="after")
-        def _delit_needs_delight(self):
-            if self.atlas == "delit" and not self.delight:
-                raise ValueError("atlas delit needs delight true; set delight to true or atlas to lit")
-            return self
 
     async def run(self, ctx):
         p = ctx.params

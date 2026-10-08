@@ -18,6 +18,9 @@ guide lists every job with its description, its modality, its params as a JSON s
 - A file input is a param: a list of `file_id`s. Its property in the schema has `"x-extensions"` (the accepted
   extensions of the files, lowercase with the dot, for example `[".png", ".jpg"]`), `minItems` and `maxItems` (the
   number of files). A file param with `minItems` 0 may be the empty list `[]`.
+- A param whose property has `"x-requires": {value: {other param: its value}}` accepts that value only when every
+  named other param has the named value; otherwise the request is refused. Example: `unitex_texture` takes
+  `atlas: "delit"` only with `delight: true`.
 - `seed` is a param of the jobs whose stages are seeded: an integer from 0 to {{SEED_MAX}}, or `"random"`. The factory
   replaces `"random"` with a random integer when it creates the job; the job object holds that integer.
 - `count` runs the job that many times at the same time, as items. Item `i` uses the seed plus `i`. Each item has its
@@ -94,9 +97,12 @@ curl.exe -s "{{BASE}}/api/jobs/j_0123456789ab?wait=60"
 - `outputs`: one list of `file_id`s per item. The outputs of an item are registered when the item has finished; a failed
   or cancelled job keeps the outputs of the items that finished before it ended.
 - `created`, `started`, `finished`: epoch seconds, null until they happen.
-- `work_seconds`, `cloud_dollars`: the time of stage execution, queue waits not counted, and the cloud cost.
+- `work_seconds`, `cloud_dollars`: the time of stage execution, queue waits not counted, and the cloud cost. A cloud
+  stage counts from the first message of its container, so the wait for a free GPU is not counted.
 - `progress`: while the job has not ended, `{"fraction", "message"}` (fraction 0 to 1 of the whole job, the message
-  names the stage and its state); null after the job has ended.
+  names the stage and its state); null after the job has ended. A cloud stage has the message
+  `waiting for a cloud container` from the moment its call is sent to Modal until its container reports; this covers
+  the wait for a free GPU and the start of the container.
 
 The first item that fails ends the job as `failed` and cancels the other items.
 
@@ -150,7 +156,8 @@ the state and the next action; `details` lists every defect, each starting with 
 
 - `GET {{BASE}}/api/health` answers `{"status": "ok"}`.
 - `GET {{BASE}}/api/system` answers
-  - `gpu`: the NVIDIA GPU, `name`, `vram_used_gb`, `vram_total_gb` and `utilization_percent`;
+  - `gpu`: the NVIDIA GPU, `name`, `vram_used_gb`, `vram_total_gb` and `utilization_percent`
+    (null while the driver does not report it, as for a powered-down laptop GPU);
   - `cpu`: `percent`, the CPU use of the machine in percent since the previous request to this endpoint (0.0 on the
     first request after the factory starts);
   - `ram`: `total_gb`, `available_gb`;

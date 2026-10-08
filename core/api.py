@@ -272,10 +272,14 @@ class Api:
 
     async def system(self):
         memory = pynvml.nvmlDeviceGetMemoryInfo(self._gpu)
+        try:
+            utilization = pynvml.nvmlDeviceGetUtilizationRates(self._gpu).gpu
+        except pynvml.NVMLError:
+            utilization = None
         ram = psutil.virtual_memory()
         return {"gpu": {"name": pynvml.nvmlDeviceGetName(self._gpu), "vram_used_gb": round(memory.used / GB, 2),
                         "vram_total_gb": round(memory.total / GB, 2),
-                        "utilization_percent": pynvml.nvmlDeviceGetUtilizationRates(self._gpu).gpu},
+                        "utilization_percent": utilization},
                 "cpu": {"percent": psutil.cpu_percent()}, "cloud": self._cloud.spend,
                 "ram": {"total_gb": round(ram.total / GB, 2), "available_gb": round(ram.available / GB, 2)},
                 "local_queue": self._local.status(), "cloud_queue": self._cloud.status()}

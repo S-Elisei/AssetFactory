@@ -14,7 +14,8 @@ through a REST API and a web UI.
      of empty texels);
    - stable-audio, ace-step, chatterbox, qwen-tts.
 4. **Cloud stage** — a function in a Modal app: trellis2, hunyuan3d-2.1, UniTEX views. Background removal runs in the
-   same container, with the `bgremove` code copied into it.
+   same container, with the `bgremove` code copied into it. A cloud stage may have an input check that the factory
+   runs before sending its call.
 5. **`LocalQueue`** — one queue for the whole machine.
    - It runs one local stage at a time.
    - Order: arrival. Calls to the loaded `Worker` go first while the oldest other call has waited
@@ -27,13 +28,16 @@ through a REST API and a web UI.
    - Results are downloaded asynchronously; sending the next call does not wait for a download.
    - The queues of different apps run in parallel with each other and with `LocalQueue`.
    - It counts cloud seconds and dollars.
+   - At start it sets the idle time of the apps' containers to `cloud_scaledown_seconds` of `config.yaml`, the
+     settings file of the factory, read at start.
 7. **`Store`** — SQLite.
    - Files: every input and output is stored by the factory and has a `file_id`.
    - Jobs and batches: params, status, outputs, work time and cloud cost. Work time is the time of stage
      execution; queue waits are not counted.
 8. **`Job`** — the base class of a job.
    - A subclass declares `Params`: a pydantic class with the names, types, limits and enums of the params, without
-     default values. `Params` also declares the file inputs, as lists of file_ids with their accepted extensions and count.
+     default values. `Params` also declares the file inputs, as lists of file_ids with their accepted extensions and
+     count, and a param's values that need given values of other params (`x-requires`).
    - A subclass implements `async run(ctx)`: a linear sequence of stage calls: a condition on the params may skip a
      stage, but never puts one stage in place of another. After the last stage, `run` assembles the job's outputs
      from the stage outputs (for example, writes the textured GLB).
@@ -103,7 +107,8 @@ through a REST API and a web UI.
       delete;
     - a "New" modal: model and task choice with a filter by the model's modality, the form from the schema with the
       recommended values of `ui/models.json`, file upload.
-14. **CLI** — installs environments and weights. A job whose environment or weights are absent is refused with the
+14. **CLI** — installs environments, weights and Modal apps; a Modal app install ends with one call that starts a
+    container, which takes the memory snapshot. A job whose environment or weights are absent is refused with the
     install command.
 15. **Shutdown** (Ctrl+C): cloud calls are cancelled with their containers terminated, the idle containers of the Modal
     apps are stopped, every `Worker` is stopped. At start, jobs left unfinished in `Store` are marked failed with

@@ -1,7 +1,7 @@
 description: Textures one mesh with non-overlapping UVs from one reference image. UniTEX generates six views of the mesh on a Modal GPU, with the lighting removed as well when delight is true; the views are projected into the UV layout and the texels no view sees are completed. The geometry and the UVs of the mesh are kept. Requires ~170 s ($0.11) of cloud work without delight and ~265 s ($0.17) with delight.
 modality: 3d
 params:
-  mesh: One GLB, Y up with the front of the object facing +Z. All triangle meshes of the scene are merged into one mesh. The mesh needs UVs in which no texel of the texture_size texture lies inside more than one UV triangle; mesh_unwrap makes such UVs.
+  mesh: One GLB, Y up with the front of the object facing +Z. All triangle meshes of the scene are merged into one mesh. The mesh needs UVs in which at most 0.1% of the covered texels of the texture_size texture lie inside more than one UV triangle; mesh_unwrap makes such UVs.
   image: One reference image of the same object in the same pose, seen from the front, the whole object visible. An image whose background is already transparent is used as is, its alpha being the object mask; any other image has its background removed.
   delight: true generates a second set of views with the lighting removed, which gives a second texture; false generates only the lit views.
   texture_size: Side in pixels of the texture.

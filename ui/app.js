@@ -106,7 +106,8 @@ function updateHeader(s) {
   setLoad("load-ram", ramUsed / s.ram.total_gb, `${ramUsed.toFixed(1)} / ${s.ram.total_gb.toFixed(1)} GB`);
   setLoad("load-vram", s.gpu.vram_used_gb / s.gpu.vram_total_gb, `${s.gpu.vram_used_gb.toFixed(1)} / ${s.gpu.vram_total_gb.toFixed(1)} GB`);
   setLoad("load-cpu", s.cpu.percent / 100, `${Math.round(s.cpu.percent)}%`);
-  setLoad("load-gpu", s.gpu.utilization_percent / 100, `${s.gpu.utilization_percent}%`);
+  const gpu = s.gpu.utilization_percent;
+  setLoad("load-gpu", gpu === null ? 0 : gpu / 100, gpu === null ? "—" : `${gpu}%`);
   $("#load-gpu").title = s.gpu.name;
   const dollars = (x) => (x === null ? "…" : `$${x.toFixed(2)}`);
   $("#credits").textContent = `Modal credits: ${dollars(s.cloud.credits_used_dollars)} used, ${dollars(s.cloud.billed_dollars)} billed`;
@@ -169,11 +170,13 @@ function fieldWidget(name, spec, values) {
   let input;
   if (spec.enum || spec.type === "boolean") {
     const options = spec.enum || [true, false];
-    if (values[name] === undefined) values[name] = options[0];
+    const allowed = (o) => Object.entries((spec["x-requires"] || {})[o] || {}).every(([other, v]) => values[other] === v);
+    if (values[name] === undefined || !allowed(values[name])) values[name] = options.find(allowed);
     input = h("select", { onchange: (e) => {
       const raw = e.target.value;
       set(spec.type === "string" ? raw : spec.type === "boolean" ? raw === "true" : Number(raw));
-    } }, options.map((o) => h("option", { value: String(o), selected: String(o) === String(values[name]), text: String(o) })));
+      renderNew();
+    } }, options.map((o) => h("option", { value: String(o), selected: String(o) === String(values[name]), disabled: !allowed(o), text: String(o) })));
   } else if (spec.type === "string") {
     if (values[name] === undefined) values[name] = "";
     input = h("textarea", { value: values[name], maxlength: spec.maxLength, oninput: (e) => set(e.target.value) });

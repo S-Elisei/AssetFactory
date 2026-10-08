@@ -1,0 +1,4 @@
+# Settings of the factory, read when it starts.
+
+# Seconds a Modal container stays up after its last call.
+cloud_scaledown_seconds: 15

@@ -4,9 +4,9 @@ message has arrived in its progress queue, else its result has been received, or
 one asyncio loop.
 
 Cost. A call is charged (t1 - t0) seconds at the rate of the app, `GPU_RATES[GPU] + CPU_RATE * CPU + MEMORY_RATE *
-MEMORY_MIB / 1024` of its module. t0 is the time the call was sent; t1 is the time of its `DONE` message, else of its
-result, else of its failure or cancellation. A call that was never sent is charged nothing. The work seconds of a call
-are the `seconds` of its result, else t1 - t0.
+MEMORY_MIB / 1024` of its module. t0 is the time of the first message of its container; t1 is the time of its `DONE`
+message, else of its result, else of its failure or cancellation. A call whose container sent no message is charged
+nothing. The work seconds of a call are the `seconds` of its result, else t1 - t0.
 
 Spend. From its creation until `stop`, the CloudQueue reads the Modal credits used and the billed amount of the current
 billing month every SPEND_REFRESH_SECONDS into `spend`, {"credits_used_dollars", "billed_dollars"} (both None until the
@@ -25,6 +25,7 @@ from modal.config import config
 from modal_proto import api_pb2
 
 from core.calls import STOPPING, OutOfMemory, StageCancelled, StageFailed
+from core.config import SETTINGS
 from core.install import cloud_apps
 from core.readiness import app_readiness
 from context import InputError
@@ -36,6 +37,8 @@ CPU_RATE = 0.0000131
 MEMORY_RATE = 0.00000222
 # Seconds of one wait for the result of a call, between two reads of its progress queue.
 POLL_SECONDS = 1
+# Progress message of a call from its sending until the first message of its container.
+SENT = "waiting for a cloud container"
 # Seconds between two reads of the Modal credits used and billed amount of the month.
 SPEND_REFRESH_SECONDS = 300
 
@@ -88,7 +91,9 @@ class _Lane:
         module = importlib.import_module(f"cloud.{app}")
         self.app = app
         self.name = module.APP_NAME
-        self.run = modal.Cls.from_name(module.APP_NAME, module.CLASS)().run
+        self.instance = modal.Cls.from_name(module.APP_NAME, module.CLASS)()
+        self.check = getattr(module, "check", None)
+        self.run = self.instance.run
         self.rate = GPU_RATES[module.GPU] + CPU_RATE * module.CPU + MEMORY_RATE * module.MEMORY_MIB / 1024
         self.waiting, self.sent = [], []
         self.computing = None
@@ -97,10 +102,12 @@ class _Lane:
 
     async def call(self, files, params, directory, progress, charge, tag):
         call = _Call(files, params, progress, charge, tag)
-        self.waiting.append(call)
-        self._dispatch()
         try:
             try:
+                if self.check is not None:
+                    await asyncio.to_thread(self.check, files, params)
+                self.waiting.append(call)
+                self._dispatch()
                 call.result = await self._run(call)
             except asyncio.CancelledError:
                 await self._cancel(call)
@@ -142,8 +149,9 @@ class _Lane:
             raise StageCancelled(STOPPING)
         contents = await asyncio.to_thread(_read, call.files)
         async with modal.Queue.ephemeral() as queue:
-            call.t0 = time.time()
             call.function_call = await self.run.spawn.aio(**contents, params=call.params, progress=queue)
+            call.fraction, call.message = 0.0, SENT
+            call.progress(0.0, SENT)
             return await self._poll(call, queue)
 
     async def _poll(self, call, queue):
@@ -162,9 +170,11 @@ class _Lane:
         return value
 
     async def _forward(self, call, queue):
-        """Passes the messages in the progress queue of the call to its callback. The `DONE` message sets `t1` and frees
-        the lane."""
+        """Passes the messages in the progress queue of the call to its callback. The first message sets `t0`; the `DONE`
+        message sets `t1` and frees the lane."""
         for fraction, message in await queue.get_many.aio(100, block=False):
+            if call.t0 is None:
+                call.t0 = time.time()
             if (fraction, message) == cloud.DONE:
                 if call.t1 is None:
                     call.t1 = time.time()
@@ -224,10 +234,17 @@ class _Lane:
 
 class CloudQueue:
     def __init__(self):
-        """Creates the lanes and starts the reading of the spend; it runs on the running asyncio loop."""
+        """Creates the lanes, starts the reading of the spend and sets the idle time of the containers of every ready
+        Modal app to the `cloud_scaledown_seconds` setting; it runs on the running asyncio loop."""
         self._lanes = {app: _Lane(app) for app in cloud_apps()}
         self.spend = {"credits_used_dollars": None, "billed_dollars": None}
         self._spend_task = asyncio.create_task(self._read_spend())
+        self._scaledown_task = asyncio.create_task(self._set_scaledown())
+
+    async def _set_scaledown(self):
+        for lane in self._lanes.values():
+            if app_readiness(lane.app) is None:
+                await lane.instance.update_autoscaler.aio(scaledown_window=SETTINGS["cloud_scaledown_seconds"])
 
     async def _read_spend(self):
         """Reads the credits used (minus the "Credits" adjustment, 0 when absent) and the billed cost of the current
@@ -244,11 +261,13 @@ class CloudQueue:
         value written to the file of its key in `directory` and replaced by its path. `files` is {argument name: path of
         the file}, read as bytes; `params` is the params dict. Calls are sent in the order of arrival. `tag` is opaque to
         the queue and is shown in `status()`.
-        `progress(fraction, message)` is a synchronous callback that must not raise; it is called on the loop for each
-        message of the container until the call is settled.
+        `progress(fraction, message)` is a synchronous callback that must not raise; it is called on the loop with
+        (0, SENT) when the call is sent and for each message of the container until the call is settled.
         `charge(seconds, dollars)` is a synchronous callback that must not raise; it is called once when the call is
         settled, whatever its outcome (see the cost rule of the module).
-        Raises InputError (the message of the container), OutOfMemory, StageFailed (any other exception of the
+        When the module of the app defines `check(files, params)`, it runs in a thread before the call waits for the
+        lane; its InputError ends the call unsent.
+        Raises InputError (the message of `check` or of the container), OutOfMemory, StageFailed (any other exception of the
         container, or of a Modal call, which is never retried) or StageCancelled (the queue was stopped).
         Cancel rule: when the awaiting task is cancelled, or the call ends with an exception other than InputError, and
         the call still holds the lane (its `DONE` message has not arrived), the Modal call gets a plain cancel, without
@@ -264,10 +283,12 @@ class CloudQueue:
         return {app: lane.status() for app, lane in self._lanes.items()}
 
     async def stop(self):
-        """Stops reading the spend, stops sending calls, ends the waiting calls as cancelled, cancels every sent call that
-        has a Modal call with its container terminated, then stops the containers of the ready Modal apps."""
+        """Stops reading the spend and setting the idle time, stops sending calls, ends the waiting calls as cancelled,
+        cancels every sent call that has a Modal call with its container terminated, then stops the containers of the
+        ready Modal apps."""
         self._spend_task.cancel()
-        await asyncio.gather(self._spend_task, return_exceptions=True)
+        self._scaledown_task.cancel()
+        await asyncio.gather(self._spend_task, self._scaledown_task, return_exceptions=True)
         lanes = list(self._lanes.values())
         await asyncio.gather(*(cancel for lane in lanes for cancel in lane.close()))
         await asyncio.gather(*(self._stop_app(lane.name) for lane in lanes if app_readiness(lane.app) is None))

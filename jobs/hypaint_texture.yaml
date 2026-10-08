@@ -1,7 +1,7 @@
 description: Textures one mesh with non-overlapping UVs from one reference image with Hunyuan3D-Paint. The background of the image is removed first. The geometry and the UVs of the mesh are kept.
 modality: 3d
 params:
-  mesh: One GLB, Y up with the front of the object facing +Z. All triangle meshes of the scene are merged into one mesh. The mesh needs UVs in which no texel of the texture_resolution texture lies inside more than one UV triangle; mesh_unwrap makes such UVs.
+  mesh: One GLB, Y up with the front of the object facing +Z. All triangle meshes of the scene are merged into one mesh. The mesh needs UVs in which at most 0.1% of the covered texels of the texture_resolution texture lie inside more than one UV triangle; mesh_unwrap makes such UVs.
   image: One reference image of the same object seen from the front, the whole object visible; it is the view from +Z. An image whose background is already transparent is used as is, its alpha being the object mask; any other image has its background removed.
   texture_resolution: Side in pixels of the base-color texture.
   delight: true removes lighting, shadows and highlights from the image before texturing; false paints the lighting of the image into the texture.
