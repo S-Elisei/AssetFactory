@@ -11,18 +11,16 @@ import time
 from pathlib import Path
 
 import modal
-from cloud import load_strict, read_image, run_call, silent
+from cloud import load_strict, read_image, run_call, scaledown_seconds
 
 APP_NAME = "assetfactory-hunyuan3d21"
 VOLUME = "assetfactory-hunyuan3d21-weights"
 WEIGHTS_APP_NAME = f"{APP_NAME}-weights"
 CLASS = "Hunyuan3D21"
-# GPU type, CPU cores, memory in MiB, seconds a container stays up without a call, and seconds a call or a container
-# start may take. The last four are guessed.
+# GPU type, CPU cores, memory in MiB, and seconds a call or a container start may take. The last three are guessed.
 GPU = "L40S"
 CPU = 2
 MEMORY_MIB = 32768
-SCALEDOWN_SECONDS = 60
 TIMEOUT_SECONDS = 900
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -100,14 +98,14 @@ def download_weights(hf_token):
 
 
 @app.cls(gpu=GPU, cpu=CPU, memory=MEMORY_MIB, max_containers=1, volumes={WEIGHTS: volume}, timeout=TIMEOUT_SECONDS,
-         scaledown_window=SCALEDOWN_SECONDS, enable_memory_snapshot=True,
+         scaledown_window=scaledown_seconds(), enable_memory_snapshot=True,
          experimental_options={"enable_gpu_snapshot": True},
          env={"HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1"})
 class Hunyuan3D21:
     @modal.enter(snap=True)
     def load(self):
-        """Loads the shape pipeline and BiRefNet onto the GPU, then runs one short generation. The BiRefNet tensors
-        are copied to the GPU and their memory maps released."""
+        """Loads the shape pipeline and BiRefNet onto the GPU, then runs the pipeline once on a demo image and
+        discards the result. The BiRefNet tensors are copied to the GPU and their memory maps released."""
         import bgremove
         import torch
         from accelerate import init_empty_weights
@@ -139,9 +137,16 @@ class Hunyuan3D21:
         del tensors
 
         self.remover = bgremove.load_on_gpu()
-        demo = Path(SOURCE) / "assets" / "demo.png"
-        self._generate(demo.read_bytes(), {"steps": 2, "guidance_scale": 5.0, "octree_resolution": 128, "seed": 0},
-                       silent)
+        demo = read_image((Path(SOURCE) / "assets" / "demo.png").read_bytes())
+        demo = bgremove.remove_background(self.remover, demo)
+        self.pipeline(image=demo, num_inference_steps=2, guidance_scale=5.0, octree_resolution=128,
+                      num_chunks=NUM_CHUNKS, generator=torch.Generator().manual_seed(0), output_type="trimesh",
+                      enable_pbar=False)
+
+    @modal.method()
+    def ready(self):
+        """Returns True. A call starts a container; a container started without a memory snapshot takes it."""
+        return True
 
     @modal.method()
     def run(self, image, params, progress):
@@ -150,6 +155,7 @@ class Hunyuan3D21:
     def _generate(self, data, params, report):
         import bgremove
         import torch
+        from context import InputError
 
         started = time.monotonic()
         source = read_image(data)
@@ -168,6 +174,8 @@ class Hunyuan3D21:
                              octree_resolution=params["octree_resolution"], num_chunks=NUM_CHUNKS,
                              generator=torch.Generator().manual_seed(params["seed"]), output_type="trimesh",
                              enable_pbar=False, callback=on_step, callback_steps=1)[0]
+        if mesh is None:
+            raise InputError("image: no surface was extracted from the image; send another image or another seed")
         report(0.95, "writing", True)
         glb = mesh.export(file_type="glb", include_normals=False)
         torch.cuda.empty_cache()

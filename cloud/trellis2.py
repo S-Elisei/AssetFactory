@@ -4,25 +4,23 @@ texture latent), the shape decoder, dual-contouring remesh and simplification wi
 UVs and no attributes.
 
 The weights are in the Modal Volume `VOLUME`, mounted at WEIGHTS: the Hugging Face cache of the repositories. The shape
-models are built without weights and their tensors are loaded straight onto the GPU, each in the dtype of the model's
-parameter or buffer of that name. The Triton kernel cache and the FlexGEMM autotuning cache are kept in the Volume and
+models are built on the GPU and their tensors are loaded straight onto it, each in the dtype of the model's parameter or
+buffer of that name; the buffers the weights files lack, such as `rope_phases`, keep the values the models compute. The Triton kernel cache and the FlexGEMM autotuning cache are kept in the Volume and
 committed after every call. Calls: see the package docstring."""
 import time
 from pathlib import Path
 
 import modal
-from cloud import load_strict, read_image, run_call, silent
+from cloud import load_strict, read_image, run_call, scaledown_seconds, silent
 
 APP_NAME = "assetfactory-trellis2"
 VOLUME = "assetfactory-trellis2-weights"
 WEIGHTS_APP_NAME = f"{APP_NAME}-weights"
 CLASS = "Trellis2"
-# GPU type, CPU cores, memory in MiB, seconds a container stays up without a call, and seconds a call or a container
-# start may take. The last four are guessed.
+# GPU type, CPU cores, memory in MiB, and seconds a call or a container start may take. The last three are guessed.
 GPU = "L40S"
 CPU = 2
 MEMORY_MIB = 32768
-SCALEDOWN_SECONDS = 60
 TIMEOUT_SECONDS = 900
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -145,21 +143,21 @@ def download_weights(hf_token):
 
 
 @app.cls(gpu=GPU, cpu=CPU, memory=MEMORY_MIB, max_containers=1, volumes={WEIGHTS: volume}, timeout=TIMEOUT_SECONDS,
-         scaledown_window=SCALEDOWN_SECONDS, enable_memory_snapshot=True,
+         scaledown_window=scaledown_seconds(), enable_memory_snapshot=True,
          experimental_options={"enable_gpu_snapshot": True},
          env={"HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1", "TRITON_CACHE_DIR": TRITON_CACHE,
               "FLEX_GEMM_AUTOTUNE_CACHE_PATH": FLEXGEMM_CACHE})
 class Trellis2:
     @modal.enter(snap=True)
     def load(self):
-        """Loads every model onto the GPU, then runs one short generation. Of the tensors of a shape model's weights
-        file, those that have a parameter or buffer of that name in the model are loaded, in the dtype of that
-        parameter or buffer. The BiRefNet tensors are copied to the GPU and their memory maps released."""
+        """Loads every model onto the GPU, then runs one short generation. A shape model is built on the GPU; of the tensors of its
+        weights file, those that have a parameter or buffer of that name in the model are loaded, in the dtype of that
+        parameter or buffer, and its buffers that the file lacks keep the values the model computed. The BiRefNet tensors are copied to the GPU and their memory maps released."""
         import json
 
         import bgremove
         import hub
-        from accelerate import init_empty_weights
+        import torch
         from safetensors import safe_open
         from torchvision import transforms
         from transformers import DINOv3ViTModel
@@ -173,13 +171,15 @@ class Trellis2:
         for name in SHAPE_MODELS:
             config_file, weights_file = _model_files(args, name)
             config = json.loads(Path(config_file).read_text(encoding="utf-8"))
-            with init_empty_weights():
+            with torch.device("cuda"):
                 model = getattr(models, config["name"])(**config["args"])
             state = model.state_dict()
             with safe_open(weights_file, "pt", device="cuda") as file:
-                load_strict(model, {key: file.get_tensor(key).to(state[key].dtype) for key in file.keys()
-                                    if key in state})
-            loaded[name] = model.to("cuda")
+                tensors = {key: file.get_tensor(key).to(state[key].dtype) for key in file.keys() if key in state}
+            buffers = dict(model.named_buffers())
+            tensors.update({key: buffers[key] for key in buffers if key not in tensors})
+            load_strict(model, tensors)
+            loaded[name] = model
 
         extractor_class = image_feature_extractor.DinoV3FeatureExtractor
         extractor = extractor_class.__new__(extractor_class)
@@ -207,6 +207,11 @@ class Trellis2:
         example = Path(SOURCE) / "assets" / "example_image" / "T.png"
         self._generate(example.read_bytes(), {"resolution": 1024, "steps": 2, "target_faces": 100000, "seed": 0},
                        silent)
+
+    @modal.method()
+    def ready(self):
+        """Returns True. A call starts a container; a container started without a memory snapshot takes it."""
+        return True
 
     @modal.method()
     def run(self, image, params, progress):

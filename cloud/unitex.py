@@ -2,7 +2,7 @@
 UniTEX's multiview texturing (FLUX.1-dev with the UniTEX texture LoRA, optionally followed by the delight LoRA pass),
 upscaled with TSD-SR, and the cameras of the views in the frame of the input mesh. In one container: background removal
 of the reference with the `bgremove` stage code (BiRefNet), then the views. The input mesh is checked first, before any
-model runs, with `meshops.load_input_mesh` of `shared/meshops.py`.
+model runs, with `meshops.load_input_mesh` of `shared/meshops.py`; `check` runs the same check in the factory.
 
 The views are rendered and generated for the mesh moved to v' = (v - c) / s, with c the center of the bounding box of
 the vertices that the faces use and s its largest extent divided by 2 * GEOMETRY_SCALE. The returned camera of view `n`
@@ -17,18 +17,16 @@ import time
 from pathlib import Path
 
 import modal
-from cloud import read_image, run_call
+from cloud import read_image, run_call, scaledown_seconds
 
 APP_NAME = "assetfactory-unitex"
 VOLUME = "unitex-weights"
 WEIGHTS_APP_NAME = f"{APP_NAME}-weights"
 CLASS = "UniTEX"
-# GPU type, CPU cores, memory in MiB, seconds a container stays up without a call, and seconds a call or a container
-# start may take. The last four are guessed.
+# GPU type, CPU cores, memory in MiB, and seconds a call or a container start may take. The last three are guessed.
 GPU = "L40S"
 CPU = 4
 MEMORY_MIB = 24576
-SCALEDOWN_SECONDS = 60
 TIMEOUT_SECONDS = 900
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -101,6 +99,13 @@ image = (
 volume = modal.Volume.from_name(VOLUME, create_if_missing=True)
 app = modal.App(APP_NAME, image=image)
 weights_app = modal.App(WEIGHTS_APP_NAME, image=image)
+
+
+def check(files, params):
+    """The input check of the stage, run by the factory before the call is sent: the mesh as `run` checks it."""
+    import meshops
+
+    meshops.load_input_mesh(files["mesh"], params["texture_size"])
 
 
 @weights_app.function(volumes={WEIGHTS: volume}, memory=MEMORY_MIB, timeout=3600)
@@ -201,7 +206,7 @@ def _grid(strip):
 
 
 @app.cls(gpu=GPU, cpu=CPU, memory=MEMORY_MIB, max_containers=1, volumes={WEIGHTS: volume}, timeout=TIMEOUT_SECONDS,
-         scaledown_window=SCALEDOWN_SECONDS, enable_memory_snapshot=True,
+         scaledown_window=scaledown_seconds(), enable_memory_snapshot=True,
          experimental_options={"enable_gpu_snapshot": True},
          env={"HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1"})
 class UniTEX:
@@ -240,6 +245,11 @@ class UniTEX:
         self.upscaler = TSDSRPipeline()
 
         self.remover = bgremove.load_on_gpu()
+
+    @modal.method()
+    def ready(self):
+        """Returns True. A call starts a container; a container started without a memory snapshot takes it."""
+        return True
 
     @modal.method()
     def run(self, mesh, image, params, progress):

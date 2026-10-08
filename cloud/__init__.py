@@ -3,11 +3,13 @@ share. A module imports `modal`, the standard library and names from this packag
 imported inside the functions that run in the container.
 
 A module defines `APP_NAME`; `app`, the `modal.App` that holds the class `CLASS`, whose remote method `run` is the
-stage; `GPU`, `CPU`, `MEMORY_MIB` and `SCALEDOWN_SECONDS`; and `WEIGHTS_APP_NAME` and `weights_app`, a `modal.App` with
-the same image and Volume that holds only the function `download_weights(hf_token)`, which fills the Volume with the
-weights and returns None. Install runs `download_weights` in an ephemeral run of `weights_app` and then deploys `app`.
-The class takes at most one container and one call at a time; the container stops `SCALEDOWN_SECONDS` after its last
-call and starts from a memory snapshot taken after the models are loaded.
+stage and whose remote method `ready` returns True; optionally `check(files, params)`, the input check that the
+factory runs before sending a call; `GPU`, `CPU` and `MEMORY_MIB`; and
+`WEIGHTS_APP_NAME` and `weights_app`, a `modal.App` with the same image and Volume that holds only the function
+`download_weights(hf_token)`, which fills the Volume with the weights and returns None. Install runs `download_weights`
+in an ephemeral run of `weights_app`, deploys `app`, then calls `ready`, whose container takes the memory snapshot.
+The class takes at most one container and one call at a time; the container stops `cloud_scaledown_seconds` of
+`<root>/config.yaml` after its last call and starts from a memory snapshot taken after the models are loaded.
 
 | module       | class        | `run` arguments                       | params                                                              |
 |--------------|--------------|---------------------------------------|---------------------------------------------------------------------|
@@ -66,6 +68,16 @@ def reporter(queue):
                 pass
 
     return report
+
+
+def scaledown_seconds():
+    """The `cloud_scaledown_seconds` setting where the app is deployed from; None in a container, where the deployed
+    value applies."""
+    if not modal.is_local():
+        return None
+    from core.config import SETTINGS
+
+    return SETTINGS["cloud_scaledown_seconds"]
 
 
 def silent(fraction, message, force=False):

@@ -58,7 +58,8 @@ def install_env(env):
 
 def install_app(app):
     """Fills the Volume of the Modal app with `download_weights` in an ephemeral run of `weights_app` of the module,
-    then deploys `app` of the module, then writes the app marker. The token in the file `<MODELS>/hf/token` is passed
+    then deploys `app` of the module, then calls `ready` of its class, whose container takes the memory snapshot, then
+    writes the app marker. The token in the file `<MODELS>/hf/token` is passed
     to `download_weights`."""
     module = importlib.import_module(f"cloud.{app}")
     token = MODELS / "hf" / "token"
@@ -70,6 +71,7 @@ def install_app(app):
         with module.weights_app.run():
             module.download_weights.remote(token.read_text(encoding="utf-8").strip())
         module.app.deploy()
+        modal.Cls.from_name(module.APP_NAME, module.CLASS)().ready.remote()
     _mark(marker)
 
 
