@@ -203,7 +203,7 @@ def run(ctx, mesh, image, steps, guidance_scale, texture_resolution, seed):
     pipeline, upscaler = ctx.model["pipeline"], ctx.model["upscaler"]
 
     ctx.progress(0.0, "rendering normals and positions")
-    scale = common.mesh_scale(vertices)
+    scale = meshops.mesh_scale(vertices)
     scaled = common.textured_mesh((vertices @ ROTATION.T * scale).astype(np.float32), faces,
                                   (meshops.welded_normals(vertices, faces) @ ROTATION.T).astype(np.float32))
     cameras = get_orthogonal_camera(

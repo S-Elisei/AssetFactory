@@ -10,8 +10,8 @@ through a REST API and a web UI.
 3. **Local stage** — a function a `Worker` runs; its inputs and outputs are files. Local stages:
    - `bgremove` (BiRefNet), z-image, flux2;
    - triposg, hunyuan3d-2, hunyuan3d-2mv, sf3d, Hunyuan3D-Paint, MV-Adapter views;
-   - `clean`, `decimate`, `unwrap`, `bake` (projection of views into the UV texture), `fill` (FlexPainter completion
-     of empty texels);
+   - `clean`, `decimate`, `unwrap`, `bake` (projection of views into the UV texture, without the outline halo of the
+     views), `fill` (FlexPainter completion of empty texels, blended into the projection);
    - stable-audio, ace-step, chatterbox, qwen-tts.
 4. **Cloud stage** — a function in a Modal app: trellis2, hunyuan3d-2.1, UniTEX views. Background removal runs in the
    same container, with the `bgremove` code copied into it. A cloud stage may have an input check that the factory

@@ -1,19 +1,11 @@
-"""Code shared by the MV-Adapter stages `mvadapter` and `bake` of the `triposg` environment: MV-Adapter's mesh
-normalisation scale and the MV-Adapter mesh object built from arrays. Imports torch and the MV-Adapter checkout."""
+"""Code shared by the MV-Adapter stages `mvadapter` and `bake` of the `triposg` environment: the MV-Adapter mesh object
+built from arrays. Imports torch and the MV-Adapter checkout."""
 import numpy as np
 import torch
 import torch.nn.functional as F
 from mvadapter.utils.mesh_utils.mesh import TexturedMesh
 
 DEVICE = torch.device("cuda")
-
-# Largest absolute coordinate of a mesh after MV-Adapter's normalisation. Documented.
-EXTENT = 0.5
-
-
-def mesh_scale(vertices):
-    """Returns the factor that scales `vertices` so that their largest absolute coordinate equals EXTENT."""
-    return EXTENT / np.abs(vertices).max()
 
 
 def textured_mesh(vertices, faces, normals, uv=None, texture_size=None):

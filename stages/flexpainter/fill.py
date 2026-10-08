@@ -9,10 +9,25 @@ completed RGB atlas of each set, in order, the same size and orientation as the 
 
 For each set, in order: the projection is reduced to SIZE (a texel is known when at least KNOWN_SHARE of the texels it
 covers are valid; its color is the mean of those); the CLIP embeddings of the views on black are averaged; the
-outpainter samples the SIZE atlas conditioned on the known texels, the embeddings and the mesh positions; every covered
-texel that the projection left empty takes the outpainter's color, bilinearly enlarged to the atlas size; the atlas
-grows GROW texels past the UV layout by repeated averaging of filled neighbors. The mesh positions are computed once and
-each set is sampled with `seed`.
+outpainter samples the SIZE atlas conditioned on the known texels, the embeddings and the mesh positions, and its
+output is bilinearly enlarged to the atlas size. Every covered texel that the projection left empty (`missing`) takes
+the outpainter's color, and every valid texel within FEATHER of a missing one mixes the projection and the outpainter's
+color with the weight smoothstep(distance / FEATHER) on the projection. Distances are 3D distances between the texels'
+positions on the mesh scaled so that its largest absolute coordinate is 0.5. Where the outpainter's color is used (the
+missing texels and the mixed ones) it is first leveled and then mirrored. Leveling shifts its color and scales its
+contrast to the mean and standard deviation of the projected valid texels around, taken with a Gaussian of sigma
+LEVEL_SIGMA in 3D that counts only texels facing a similar way (`texel_means`), against those of the missing texels'
+outpainter colors; the contrast factor is limited to CONTRAST_RANGE, and the leveled color is mixed with the unleveled
+one by the projected texels' weight divided by CONFIDENCE_SHARE of the total weight (at most 1; zero where the missing
+texels around have zero weight). Mirroring blends the color across the cuts between UV charts (8-connected sets of
+covered texels). A cut texel is a texel the output covers with a texel of another chart (its partner chart) among its
+CUT_NEIGHBORS nearest such texels within CUT_REACH. A used texel takes, for each of up to PARTNERS partner charts, the
+nearest cut texel of its own chart with that partner chart among its CUT_CANDIDATES nearest cut texels within
+MIRROR_REACH, and reads the color of the partner chart among the MIRROR_NEAREST texels nearest to its mirror image
+across that cut texel; a partner chart none of them is of does not count. Its color becomes the mean of its own color
+(weight 1) and those colors, each weighted 1 - smoothstep(distance to the cut texel / MIRROR_REACH). The atlas then
+grows GROW texels past the UV layout by repeated averaging of filled neighbors. The texel positions, distances and
+mirror partners are computed once and each set is sampled with `seed`.
 
 The outpainter and the CLIP models run in evaluation mode. The weights of every model stay in memory maps of safetensors
 files; `run` copies the weights of a model to the GPU for the time that model runs. `load` and `download` do not use the
@@ -26,6 +41,7 @@ import hub
 import mapped
 import meshops
 import numpy as np
+import texel_means
 import torch
 import torch.nn.functional as F
 from accelerate import init_empty_weights
@@ -35,6 +51,7 @@ from model.outpainter_net import OutpainterNet
 from open_clip.model import _build_vision_tower
 from PIL import Image
 from pipeline.outpainter import OutpainterPipe
+from scipy.spatial import cKDTree
 from spuv.mesh_utils import vertex_transform
 from spuv.rasterize import NVDiffRasterizerContext
 from transformers import CLIPImageProcessor, CLIPVisionConfig, CLIPVisionModelWithProjection
@@ -88,6 +105,23 @@ MESH_SCALE = 0.5
 # layout. Guessed.
 KNOWN_SHARE = 0.5
 GROW = 16
+# Distance from the nearest missing texel up to which a valid texel mixes in the outpainter's color; sigma of the
+# leveling's Gaussian;
+# range of the factor that scales the contrast of the outpainter's color in leveling; share of the total weight that the
+# projected texels' weight must reach for full leveling; largest distance between texels of two charts at a cut; largest
+# distance from a cut texel at which a texel is mirrored; number of partner charts a texel mirrors from; number of
+# nearest texels searched for the mirror image's texel in the partner chart; number of neighbors searched for the
+# texels of another chart at a cut; number of nearest cut texels searched for a texel to mirror. Guessed.
+FEATHER = 0.01
+LEVEL_SIGMA = 0.008
+CONTRAST_RANGE = (0.25, 1.0)
+CONFIDENCE_SHARE = 0.1
+CUT_REACH = 0.002
+MIRROR_REACH = 0.005
+PARTNERS = 2
+MIRROR_NEAREST = 16
+CUT_NEIGHBORS = 9
+CUT_CANDIDATES = 32
 
 
 def _encoder(directory):
@@ -184,20 +218,127 @@ def _views_on_black(paths):
     return torch.stack(views)
 
 
-def _geometry(vertices, faces, uv):
+def _geometry(context, vertices, faces, uv):
     """Returns (position, mask): the (1, 3, SIZE, SIZE) mesh position map of the UV layout, with the mesh in
     FlexPainter's frame, and the (1, 1, SIZE, SIZE) float mask of the texels inside a UV triangle. Both have row 0 at
-    v = 0."""
+    v = 0. `context` is the NVDiffRasterizerContext."""
     positions = vertex_transform({"v_pos": torch.tensor(vertices, dtype=torch.float32, device=DEVICE)},
                                  mesh_scale=MESH_SCALE)["v_pos"]
     triangles = torch.tensor(faces, dtype=torch.int32, device=DEVICE)
     clip = torch.tensor(uv, dtype=torch.float32, device=DEVICE)[None] * 2.0 - 1.0
-    context = NVDiffRasterizerContext("cuda", DEVICE)
     rasterized, _ = context.rasterize(
         torch.cat((clip, torch.zeros_like(clip[..., :1]), torch.ones_like(clip[..., :1])), dim=-1), triangles,
         (SIZE, SIZE))
     position, _ = context.interpolate_one(positions, rasterized, triangles)
     return position.permute(0, 3, 1, 2), (rasterized[..., 3:4] > 0).float().permute(0, 3, 1, 2)
+
+
+def _texels(context, vertices, faces, uv, size):
+    """Returns (position, normal): the (size, size, 3) float32 position and unit normal of every texel inside a UV
+    triangle, in the texel layout of the atlases of `bake` (row 0 at v = 1). The positions are those of the mesh scaled
+    by meshops.mesh_scale, the normals are interpolated from meshops.welded_normals. `context` is the
+    NVDiffRasterizerContext."""
+    attributes = torch.tensor(np.concatenate([vertices * meshops.mesh_scale(vertices),
+                                              meshops.welded_normals(vertices, faces)], axis=1),
+                              dtype=torch.float32, device=DEVICE)
+    triangles = torch.tensor(faces, dtype=torch.int32, device=DEVICE)
+    clip = torch.tensor(np.stack([uv[:, 0], 1.0 - uv[:, 1]], axis=1), dtype=torch.float32,
+                        device=DEVICE)[None] * 2.0 - 1.0
+    rasterized, _ = context.rasterize(
+        torch.cat((clip, torch.zeros_like(clip[..., :1]), torch.ones_like(clip[..., :1])), dim=-1), triangles,
+        (size, size))
+    texels = context.interpolate_one(attributes, rasterized, triangles)[0][0].cpu().numpy()
+    normal = texels[..., 3:]
+    return texels[..., :3], normal / np.maximum(np.linalg.norm(normal, axis=-1, keepdims=True), 1e-6)
+
+
+def _feather(position, valid, has, missing):
+    """Returns (selected, weight, used) for the (H, W) boolean `valid`, `has` (texels the outpainter's output covers)
+    and `missing` texels, with `position` their (H, W, 3) positions: the mask of the valid texels the output covers, the
+    float weight of the projection (the smoothstep of the distance to the nearest missing texel over FEATHER at the
+    selected texels, 1 at the other valid texels, 0 elsewhere) and the boolean mask of the texels that take the
+    outpainter's color at least in part."""
+    selected = valid & has
+    distance = cKDTree(position[missing]).query(position[selected], k=1, workers=-1)[0]
+    fraction = np.clip(distance / FEATHER, 0, 1)
+    weight = valid.astype(np.float32)
+    weight[selected] = fraction * fraction * (3 - 2 * fraction)
+    used = missing.copy()
+    used[selected] = distance < FEATHER
+    return selected, weight, used
+
+
+def _leveled(position, normal, valid, missing, used, colors, output):
+    """Levels the (H, W, 3) outpainter's `output` in place at the `used` texels against the (H, W, 3) projected `colors`
+    at the `valid` texels (`missing` is the boolean mask of the texels whose output is the fill): see the module
+    docstring. `position` and `normal` are the (H, W, 3) texel positions and unit normals."""
+    if not used.any():
+        return
+    ref_weight, (ref_mean, ref_square) = texel_means.smooth_means(
+        position, normal, valid, used, [colors, colors ** 2], LEVEL_SIGMA)
+    fill_weight, (fill_mean, fill_square) = texel_means.smooth_means(
+        position, normal, missing, used, [output, output ** 2], LEVEL_SIGMA)
+    ref_std = np.sqrt(np.maximum(ref_square - ref_mean ** 2, 1e-6))
+    fill_std = np.sqrt(np.maximum(fill_square - fill_mean ** 2, 1e-6))
+    confidence = (np.clip(ref_weight / np.maximum(CONFIDENCE_SHARE * (ref_weight + fill_weight), 1e-6), 0, 1)
+                  * (fill_weight > 1e-6))[:, None]
+    leveled = ref_mean + (output[used] - fill_mean) * np.clip(ref_std / fill_std, *CONTRAST_RANGE)
+    output[used] = np.clip(confidence * leveled + (1 - confidence) * output[used], 0, 1)
+
+
+def _mirror_plan(position, covered, has, used):
+    """Returns (texels, pairs) for mirroring across the UV chart cuts. `position` is the (H, W, 3) texel positions;
+    `covered`, `has` and `used` are (H, W) boolean masks. `texels` indexes the used texels among the `has` texels
+    (row-major order). `pairs` has one entry (index, source, weight) per partner rank: the indices into `texels` of the
+    texels that have a partner of that rank, the index among the `has` texels of the texel each takes its mirrored color
+    from, and the float32 weight of that color."""
+    _, chart = cv2.connectedComponents(covered.astype(np.uint8), connectivity=8)
+    points, label = position[has], chart[has]
+    tree = cKDTree(points)
+    distance, neighbor = tree.query(points, k=CUT_NEIGHBORS, distance_upper_bound=CUT_REACH, workers=-1)
+    neighbor_label = label[np.minimum(neighbor, len(label) - 1)]
+    other = np.isfinite(distance) & (neighbor_label != label[:, None])
+    cut = other.any(axis=1)
+    texels = np.nonzero(used[has])[0]
+    if not cut.any():
+        return texels, []
+    partner = neighbor_label[np.arange(len(label)), other.argmax(axis=1)][cut]
+    cut_points, cut_label = points[cut], label[cut]
+    distance, nearest = cKDTree(cut_points).query(points[texels], k=CUT_CANDIDATES, distance_upper_bound=MIRROR_REACH,
+                                                  workers=-1)
+    nearest = np.minimum(nearest, len(cut_points) - 1)
+    own = np.isfinite(distance) & (cut_label[nearest] == label[texels][:, None])
+    taken = np.full((len(texels), PARTNERS), -1)
+    pairs = []
+    for rank in range(PARTNERS):
+        pick = own & (partner[nearest][..., None] != taken[:, None, :]).all(axis=2)
+        found = pick.any(axis=1)
+        column = pick.argmax(axis=1)[found]
+        index = np.nonzero(found)[0]
+        cut_index, reach = nearest[index, column], distance[index, column]
+        target = partner[cut_index]
+        taken[index, rank] = target
+        _, candidates = tree.query(2 * cut_points[cut_index] - points[texels[index]], k=MIRROR_NEAREST, workers=-1)
+        hit = label[candidates] == target[:, None]
+        source = candidates[np.arange(len(index)), hit.argmax(axis=1)]
+        fraction = np.clip(reach / MIRROR_REACH, 0, 1)
+        pairs.append((index, source, ((1 - fraction * fraction * (3 - 2 * fraction)) * hit.any(axis=1)
+                                      ).astype(np.float32)))
+    return texels, pairs
+
+
+def _mirrored(output, has, plan):
+    """Mirrors the (H, W, 3) outpainter's `output` in place across the UV chart cuts at the used texels; `has` is the
+    boolean mask of the texels it covers and `plan` the result of _mirror_plan. The sources are read before any texel
+    changes."""
+    texels, pairs = plan
+    values = output[has]
+    total, weight = values[texels].copy(), np.ones(len(texels), np.float32)
+    for index, source, source_weight in pairs:
+        total[index] += source_weight[:, None] * values[source]
+        weight[index] += source_weight
+    values[texels] = total / weight[:, None]
+    output[has] = values
 
 
 def _known(valid, mask, factor):
@@ -236,7 +377,21 @@ def run(ctx, mesh, covered, valid, sets, seed):
     atlases = [np.asarray(Image.open(entry["atlas"]).convert("RGB"), np.float32) / 255 for entry in sets]
 
     ctx.progress(0.0, "preparing the maps")
-    position, mask = _geometry(vertices, faces, uv)
+    context = NVDiffRasterizerContext("cuda", DEVICE)
+    position, mask = _geometry(context, vertices, faces, uv)
+    flipped = mask.flip(2)
+    enlarged_mask = F.interpolate(flipped, scale_factor=factor, mode="bilinear", align_corners=False)
+    has = covered_texels & (enlarged_mask[0, 0].cpu().numpy() > 0)
+    missing = has & ~valid_texels
+    texel_position, texel_normal = _texels(context, vertices, faces, uv, covered_texels.shape[0])
+    del context
+    ctx.check_cancel()
+    ctx.progress(0.01, "measuring the distances to the missing texels")
+    selected, feather, used = _feather(texel_position, valid_texels, has, missing)
+    ctx.check_cancel()
+    ctx.progress(0.02, "finding the UV cuts")
+    plan = _mirror_plan(texel_position, covered_texels, has, used)
+    ctx.check_cancel()
     valid_map, share, baked_weight = _known(valid_texels, mask, factor)
     pipe = OutpainterPipe.__new__(OutpainterPipe)
     pipe.device, pipe.dtype, pipe.clip = DEVICE, torch.bfloat16, ctx.model["clip"]
@@ -249,25 +404,34 @@ def run(ctx, mesh, covered, valid, sets, seed):
             conditions.append(pipe.prepare_condition_info(None, None, _views_on_black(entry["views"]), baked_image,
                                                           baked_weight))
 
-    flipped = mask.flip(2)
-    enlarged_mask = F.interpolate(flipped, scale_factor=factor, mode="bilinear", align_corners=False)
-    missing = covered_texels & ~valid_texels & (enlarged_mask[0, 0].cpu().numpy() > 0)
     pipe.outpainter = ctx.model["outpainter"]
-    paths = []
+    outputs = []
     with mapped.on_gpu(DEVICE, pipe.outpainter):
-        for number, (condition, colors) in enumerate(zip(conditions, atlases)):
-            start = 0.1 + 0.85 * number / len(sets)
-            pipe.pbar = _Steps(ctx, start, start + 0.85 / len(sets), f"set {number + 1}/{len(sets)}, ")
+        for number, condition in enumerate(conditions):
+            start = 0.1 + 0.7 * number / len(sets)
+            pipe.pbar = _Steps(ctx, start, start + 0.7 / len(sets), f"set {number + 1}/{len(sets)}, ")
             pipe.prepare_condition_info = lambda *_: condition
             torch.manual_seed(seed)
             sampled = pipe(None, None, None, condition["baked_image"], condition["baked_weight"], mask, position, STEPS,
                            CFG_SCALE, GUIDANCE_INTERVAL, GUIDANCE_RESCALE)
             enlarged = F.interpolate(sampled.flip(2) * flipped, scale_factor=factor, mode="bilinear",
                                      align_corners=False)
-            fill = (enlarged / enlarged_mask.clamp(min=1e-6))[0].permute(1, 2, 0).cpu().numpy()
-            texture = np.where(valid_texels[..., None], colors, 0.0).astype(np.float32)
-            texture[missing] = fill[missing]
-            texture = _grown(texture, (valid_texels | missing).astype(np.float32))
-            paths.append(ctx.dir / f"atlas_{number}.png")
-            Image.fromarray((texture.clip(0, 1) * 255).round().astype(np.uint8)).save(paths[-1])
+            outputs.append((enlarged / enlarged_mask.clamp(min=1e-6))[0].permute(1, 2, 0).cpu().numpy())
+
+    paths = []
+    for number, (colors, output) in enumerate(zip(atlases, outputs)):
+        start = 0.8 + 0.2 * number / len(sets)
+        ctx.progress(start, f"leveling set {number + 1}/{len(sets)}")
+        _leveled(texel_position, texel_normal, valid_texels, missing, used, colors, output)
+        ctx.check_cancel()
+        ctx.progress(start + 0.1 / len(sets), f"mirroring set {number + 1}/{len(sets)}")
+        _mirrored(output, has, plan)
+        ctx.check_cancel()
+        texture = np.where(valid_texels[..., None], colors, 0.0).astype(np.float32)
+        texture[missing] = output[missing]
+        texture[selected] = (feather[selected, None] * colors[selected]
+                             + (1 - feather[selected, None]) * output[selected])
+        texture = _grown(texture, (valid_texels | missing).astype(np.float32))
+        paths.append(ctx.dir / f"atlas_{number}.png")
+        Image.fromarray((texture.clip(0, 1) * 255).round().astype(np.uint8)).save(paths[-1])
     return {"atlases": [str(path) for path in paths]}

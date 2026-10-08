@@ -1,5 +1,5 @@
 """Mesh operations shared by the stages: GLB read and write, the check of a mesh input, vertex welding, welded vertex
-normals, UV overlap measurement and QEM decimation. CPU only.
+normals, MV-Adapter's mesh normalisation scale, UV overlap measurement and QEM decimation. CPU only.
 
 Meshes are `vertices` (N, 3) float64 and `faces` (M, 3) int64 arrays."""
 import numpy as np
@@ -9,6 +9,8 @@ from context import InputError
 CHUNK_TEXELS = 2_000_000
 # Largest share of the covered texel centers that may lie inside more than one UV triangle. Guessed.
 OVERLAP_SHARE = 1e-3
+# Largest absolute coordinate of a mesh after MV-Adapter's normalisation. Documented.
+EXTENT = 0.5
 
 
 def load_glb(path):
@@ -57,6 +59,11 @@ def welded_normals(vertices, faces):
 
     unique, inverse = weld(vertices, np.arange(len(vertices)))
     return trimesh.Trimesh(unique, inverse[faces], process=False).vertex_normals[inverse]
+
+
+def mesh_scale(vertices):
+    """Returns the factor that scales `vertices` so that their largest absolute coordinate equals EXTENT."""
+    return EXTENT / np.abs(vertices).max()
 
 
 def decimate_mesh(mesh, target_faces):
